@@ -12,6 +12,7 @@ KVSTORE_OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(KVSTORE_SRCS))
 
 # Examples
 EXAMPLES = $(BUILD_DIR)/kvstore_example \
+           $(BUILD_DIR)/kvstore_complex_test \
            $(BUILD_DIR)/index_record_example
 
 .PHONY: all clean examples
@@ -29,6 +30,10 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c include/*.h
 $(BUILD_DIR)/kvstore_example: $(EXAMPLES_DIR)/kvstore_example.c $(KVSTORE_OBJS) include/*.h
 	$(CC) $(CFLAGS) $< $(KVSTORE_OBJS) -o $@ $(LDFLAGS)
 
+# Build complex kvstore test
+$(BUILD_DIR)/kvstore_complex_test: $(EXAMPLES_DIR)/kvstore_complex_test.c $(KVSTORE_OBJS) include/*.h
+	$(CC) $(CFLAGS) $< $(KVSTORE_OBJS) -o $@ $(LDFLAGS)
+
 # Build original index_record example
 $(BUILD_DIR)/index_record_example: $(EXAMPLES_DIR)/index_record_example.c include/serialise.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
@@ -42,6 +47,9 @@ clean:
 run-kvstore: $(BUILD_DIR)/kvstore_example
 	./$(BUILD_DIR)/kvstore_example
 
+run-complex: $(BUILD_DIR)/kvstore_complex_test
+	./$(BUILD_DIR)/kvstore_complex_test
+
 run-index: $(BUILD_DIR)/index_record_example
 	./$(BUILD_DIR)/index_record_example
 
@@ -51,3 +59,6 @@ run-all: $(EXAMPLES)
 	@echo ""
 	@echo "=== Running kvstore_example ==="
 	@./$(BUILD_DIR)/kvstore_example
+	@echo ""
+	@echo "=== Running kvstore_complex_test ==="
+	@./$(BUILD_DIR)/kvstore_complex_test

@@ -77,6 +77,9 @@ SERIALISE_SECONDARY_KEY(message_record, by_mailbox_time,
     SERIALISE_FIELD(received, timespec)
 )
 
+// Generate helper functions for key management and index updates
+SERIALISE_FINALIZE_INDICES(message_record, by_sender, by_recipient, by_thread, by_mailbox_time)
+
 // ------------------------
 // Helper functions
 // ------------------------
@@ -106,159 +109,6 @@ static struct message_record create_message(uint32_t mailbox_id, uint32_t uid,
     msg.thread_id = thread_id;
     msg.last_modified = msg.received;
     return msg;
-}
-
-// Populate key_buf with all keys
-static void populate_key_buf_message_record(struct message_record *rec, kvstore_key_buf_t *key_buf) {
-    // Extract all keys
-    struct message_record_pk pk;
-    message_record_extract_pk(rec, &pk);
-    size_t pk_sz = serialise_message_record_pk_size(&pk);
-
-    struct message_record_by_sender_key sk_sender;
-    message_record_extract_by_sender(rec, &sk_sender);
-    size_t sk_sender_sz = serialise_message_record_by_sender_size(&sk_sender);
-
-    struct message_record_by_recipient_key sk_recipient;
-    message_record_extract_by_recipient(rec, &sk_recipient);
-    size_t sk_recipient_sz = serialise_message_record_by_recipient_size(&sk_recipient);
-
-    struct message_record_by_thread_key sk_thread;
-    message_record_extract_by_thread(rec, &sk_thread);
-    size_t sk_thread_sz = serialise_message_record_by_thread_size(&sk_thread);
-
-    struct message_record_by_mailbox_time_key sk_mbox_time;
-    message_record_extract_by_mailbox_time(rec, &sk_mbox_time);
-    size_t sk_mbox_time_sz = serialise_message_record_by_mailbox_time_size(&sk_mbox_time);
-
-    // Total size
-    size_t total = 4 + pk_sz + 4 + sk_sender_sz + 4 + sk_recipient_sz +
-                   4 + sk_thread_sz + 4 + sk_mbox_time_sz;
-
-    if (!key_buf->buf || key_buf->size < total) {
-        key_buf->buf = (char*)realloc(key_buf->buf, total);
-        key_buf->size = total;
-    }
-
-    // Serialize all keys
-    char *p = key_buf->buf;
-    uint32_t len;
-
-    len = (uint32_t)pk_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_message_record_pk(p, &pk); p += pk_sz;
-
-    len = (uint32_t)sk_sender_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_message_record_by_sender(p, &sk_sender); p += sk_sender_sz;
-
-    len = (uint32_t)sk_recipient_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_message_record_by_recipient(p, &sk_recipient); p += sk_recipient_sz;
-
-    len = (uint32_t)sk_thread_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_message_record_by_thread(p, &sk_thread); p += sk_thread_sz;
-
-    len = (uint32_t)sk_mbox_time_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_message_record_by_mailbox_time(p, &sk_mbox_time);
-}
-
-// Put message with all indices
-static int put_message_with_indices(kvstore_txn_t *txn, struct message_record *msg,
-                                    kvstore_key_buf_t *old_keys) {
-    int rc = kvstore_put_message_record(txn, msg, old_keys);
-    if (rc != KVSTORE_OK) return rc;
-
-    // Extract and serialize primary key
-    struct message_record_pk pk;
-    message_record_extract_pk(msg, &pk);
-    size_t pk_sz = serialise_message_record_pk_size(&pk);
-    char *pk_buf = (char*)alloca(pk_sz);
-    serialise_message_record_pk(pk_buf, &pk);
-
-    // Handle old keys if updating
-    if (old_keys && old_keys->buf) {
-        char *p = old_keys->buf;
-
-        // Skip pk
-        uint32_t old_pk_len;
-        memcpy(&old_pk_len, p, 4);
-        p += 4 + old_pk_len;
-
-        // Extract old secondary keys
-        char *old_sk_bufs[4];
-        uint32_t old_sk_lens[4];
-
-        for (int i = 0; i < 4; i++) {
-            memcpy(&old_sk_lens[i], p, 4);
-            p += 4;
-            old_sk_bufs[i] = p;
-            p += old_sk_lens[i];
-        }
-
-        // Serialize new secondary keys
-        struct message_record_by_sender_key new_sk_sender;
-        message_record_extract_by_sender(msg, &new_sk_sender);
-        size_t new_sk_sender_sz = serialise_message_record_by_sender_size(&new_sk_sender);
-        char *new_sk_sender_buf = (char*)alloca(new_sk_sender_sz);
-        serialise_message_record_by_sender(new_sk_sender_buf, &new_sk_sender);
-
-        struct message_record_by_recipient_key new_sk_recipient;
-        message_record_extract_by_recipient(msg, &new_sk_recipient);
-        size_t new_sk_recipient_sz = serialise_message_record_by_recipient_size(&new_sk_recipient);
-        char *new_sk_recipient_buf = (char*)alloca(new_sk_recipient_sz);
-        serialise_message_record_by_recipient(new_sk_recipient_buf, &new_sk_recipient);
-
-        struct message_record_by_thread_key new_sk_thread;
-        message_record_extract_by_thread(msg, &new_sk_thread);
-        size_t new_sk_thread_sz = serialise_message_record_by_thread_size(&new_sk_thread);
-        char *new_sk_thread_buf = (char*)alloca(new_sk_thread_sz);
-        serialise_message_record_by_thread(new_sk_thread_buf, &new_sk_thread);
-
-        struct message_record_by_mailbox_time_key new_sk_mbox_time;
-        message_record_extract_by_mailbox_time(msg, &new_sk_mbox_time);
-        size_t new_sk_mbox_time_sz = serialise_message_record_by_mailbox_time_size(&new_sk_mbox_time);
-        char *new_sk_mbox_time_buf = (char*)alloca(new_sk_mbox_time_sz);
-        serialise_message_record_by_mailbox_time(new_sk_mbox_time_buf, &new_sk_mbox_time);
-
-        // Check and delete changed secondary keys
-        if (old_sk_lens[0] != new_sk_sender_sz ||
-            memcmp(old_sk_bufs[0], new_sk_sender_buf, new_sk_sender_sz) != 0) {
-            kvstore_del_message_record_by_sender_internal(txn, old_sk_bufs[0], old_sk_lens[0]);
-        }
-
-        if (old_sk_lens[1] != new_sk_recipient_sz ||
-            memcmp(old_sk_bufs[1], new_sk_recipient_buf, new_sk_recipient_sz) != 0) {
-            kvstore_del_message_record_by_recipient_internal(txn, old_sk_bufs[1], old_sk_lens[1]);
-        }
-
-        if (old_sk_lens[2] != new_sk_thread_sz ||
-            memcmp(old_sk_bufs[2], new_sk_thread_buf, new_sk_thread_sz) != 0) {
-            kvstore_del_message_record_by_thread_internal(txn, old_sk_bufs[2], old_sk_lens[2]);
-        }
-
-        if (old_sk_lens[3] != new_sk_mbox_time_sz ||
-            memcmp(old_sk_bufs[3], new_sk_mbox_time_buf, new_sk_mbox_time_sz) != 0) {
-            kvstore_del_message_record_by_mailbox_time_internal(txn, old_sk_bufs[3], old_sk_lens[3]);
-        }
-    }
-
-    // Add all secondary indices
-    rc = kvstore_put_message_record_by_sender_internal(txn, msg, pk_buf, pk_sz);
-    if (rc != KVSTORE_OK) return rc;
-
-    rc = kvstore_put_message_record_by_recipient_internal(txn, msg, pk_buf, pk_sz);
-    if (rc != KVSTORE_OK) return rc;
-
-    rc = kvstore_put_message_record_by_thread_internal(txn, msg, pk_buf, pk_sz);
-    if (rc != KVSTORE_OK) return rc;
-
-    rc = kvstore_put_message_record_by_mailbox_time_internal(txn, msg, pk_buf, pk_sz);
-    if (rc != KVSTORE_OK) return rc;
-
-    return KVSTORE_OK;
 }
 
 // ------------------------
@@ -316,7 +166,7 @@ int main(void) {
         kvstore_txn_t *txn = kvstore_txn_begin(db, false);
 
         for (int i = 0; i < num_messages; i++) {
-            int rc = put_message_with_indices(txn, &test_data[i], NULL);
+            int rc = kvstore_put_message_record_with_all_indices(txn, &test_data[i], NULL);
             assert(rc == KVSTORE_OK);
         }
 
@@ -485,7 +335,7 @@ int main(void) {
             current.last_modified.tv_sec = time(NULL);
 
             // Write back
-            rc = put_message_with_indices(txn, &current, &key_buf);
+            rc = kvstore_put_message_record_with_all_indices(txn, &current, &key_buf);
             assert(rc == KVSTORE_OK);
 
             printf("  Updated (%u, %u): new sender = %s\n",

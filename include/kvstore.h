@@ -438,6 +438,174 @@ static inline int SER_CAT(kvstore_del_, SER_CAT(rec_type, SER_CAT(_, SER_CAT(ind
     return kvstore_txn_del(txn, #rec_type "_" #index_name, &k); \
 }
 
+// ------------------------
+// Index finalization macro - generates helper functions
+// ------------------------
+
+// Helper macros for iterating over secondary keys
+#define KV_POPULATE_SK_SIZE(rec_type, sk_name) \
+    struct SER_CAT(SER_CAT(rec_type, _), SER_CAT(sk_name, _key)) SER_CAT(sk_, sk_name); \
+    SER_CAT(rec_type, SER_CAT(_extract_, sk_name))(rec, &SER_CAT(sk_, sk_name)); \
+    size_t SER_CAT(sk_, SER_CAT(sk_name, _sz)) = \
+        SER_CAT(serialise_, SER_CAT(rec_type, SER_CAT(_, SER_CAT(sk_name, _size))))(&SER_CAT(sk_, sk_name)); \
+    total += 4 + SER_CAT(sk_, SER_CAT(sk_name, _sz));
+
+#define KV_POPULATE_SK_DATA(rec_type, sk_name) \
+    len = (uint32_t)SER_CAT(sk_, SER_CAT(sk_name, _sz)); \
+    memcpy(p, &len, 4); p += 4; \
+    SER_CAT(serialise_, SER_CAT(rec_type, SER_CAT(_, sk_name)))(p, &SER_CAT(sk_, sk_name)); \
+    p += SER_CAT(sk_, SER_CAT(sk_name, _sz));
+
+#define KV_PUT_SK_WITH_CHANGE_DETECT(rec_type, sk_name, sk_idx) \
+    char *SER_CAT(new_sk_, SER_CAT(sk_name, _buf)) = (char*)alloca(SER_CAT(sk_, SER_CAT(sk_name, _sz))); \
+    SER_CAT(serialise_, SER_CAT(rec_type, SER_CAT(_, sk_name)))(SER_CAT(new_sk_, SER_CAT(sk_name, _buf)), \
+                                                                  &SER_CAT(sk_, sk_name)); \
+    \
+    if (old_keys && old_keys->buf) { \
+        bool SER_CAT(sk_, SER_CAT(sk_name, _changed)) = \
+            (old_sk_lens[sk_idx] != SER_CAT(sk_, SER_CAT(sk_name, _sz)) || \
+             memcmp(old_sk_bufs[sk_idx], SER_CAT(new_sk_, SER_CAT(sk_name, _buf)), \
+                    SER_CAT(sk_, SER_CAT(sk_name, _sz))) != 0); \
+        if (SER_CAT(sk_, SER_CAT(sk_name, _changed))) { \
+            SER_CAT(kvstore_del_, SER_CAT(rec_type, SER_CAT(_, SER_CAT(sk_name, _internal))))( \
+                txn, old_sk_bufs[sk_idx], old_sk_lens[sk_idx]); \
+        } \
+    } \
+    \
+    rc = SER_CAT(kvstore_put_, SER_CAT(rec_type, SER_CAT(_, SER_CAT(sk_name, _internal))))( \
+        txn, rec, pk_buf, pk_sz); \
+    if (rc != KVSTORE_OK) return rc;
+
+// Generate populate_key_buf and put_with_all_indices functions
+// Usage: SERIALISE_FINALIZE_INDICES(record_type, sk1, sk2, sk3, ...)
+#define SERIALISE_FINALIZE_INDICES(rec_type, ...) \
+\
+/* Generate populate_key_buf function */ \
+static inline void SER_CAT(populate_key_buf_, rec_type)( \
+    struct rec_type *rec, kvstore_key_buf_t *key_buf) { \
+    \
+    /* Extract primary key */ \
+    struct SER_CAT(rec_type, _pk) pk; \
+    SER_CAT(rec_type, _extract_pk)(rec, &pk); \
+    size_t pk_sz = SER_CAT(serialise_, SER_CAT(rec_type, _pk_size))(&pk); \
+    \
+    /* Extract all secondary keys and calculate total size */ \
+    size_t total = 4 + pk_sz; \
+    KV_FINALIZE_FOR_EACH(KV_POPULATE_SK_SIZE, rec_type, __VA_ARGS__) \
+    \
+    /* Allocate buffer */ \
+    if (!key_buf->buf || key_buf->size < total) { \
+        key_buf->buf = (char*)realloc(key_buf->buf, total); \
+        key_buf->size = total; \
+    } \
+    \
+    /* Serialize all keys into buffer */ \
+    char *p = key_buf->buf; \
+    uint32_t len; \
+    \
+    /* Primary key */ \
+    len = (uint32_t)pk_sz; \
+    memcpy(p, &len, 4); p += 4; \
+    SER_CAT(serialise_, SER_CAT(rec_type, _pk))(p, &pk); p += pk_sz; \
+    \
+    /* Secondary keys */ \
+    KV_FINALIZE_FOR_EACH(KV_POPULATE_SK_DATA, rec_type, __VA_ARGS__) \
+} \
+\
+/* Generate put_with_all_indices function */ \
+static inline int SER_CAT(kvstore_put_, SER_CAT(rec_type, _with_all_indices))( \
+    kvstore_txn_t *txn, struct rec_type *rec, kvstore_key_buf_t *old_keys) { \
+    \
+    int rc; \
+    \
+    /* Put to primary table */ \
+    rc = SER_CAT(kvstore_put_, rec_type)(txn, rec, old_keys); \
+    if (rc != KVSTORE_OK) return rc; \
+    \
+    /* Extract and serialize primary key */ \
+    struct SER_CAT(rec_type, _pk) pk; \
+    SER_CAT(rec_type, _extract_pk)(rec, &pk); \
+    size_t pk_sz = SER_CAT(serialise_, SER_CAT(rec_type, _pk_size))(&pk); \
+    char *pk_buf = (char*)alloca(pk_sz); \
+    SER_CAT(serialise_, SER_CAT(rec_type, _pk))(pk_buf, &pk); \
+    \
+    /* Extract all secondary keys */ \
+    size_t total = 0; \
+    KV_FINALIZE_FOR_EACH(KV_POPULATE_SK_SIZE, rec_type, __VA_ARGS__) \
+    \
+    /* Parse old keys if updating */ \
+    char *old_sk_bufs[KV_COUNT_ARGS(__VA_ARGS__)]; \
+    uint32_t old_sk_lens[KV_COUNT_ARGS(__VA_ARGS__)]; \
+    \
+    if (old_keys && old_keys->buf) { \
+        char *p = old_keys->buf; \
+        \
+        /* Skip primary key */ \
+        uint32_t old_pk_len; \
+        memcpy(&old_pk_len, p, 4); \
+        p += 4 + old_pk_len; \
+        \
+        /* Extract old secondary keys */ \
+        for (size_t i = 0; i < KV_COUNT_ARGS(__VA_ARGS__); i++) { \
+            memcpy(&old_sk_lens[i], p, 4); \
+            p += 4; \
+            old_sk_bufs[i] = p; \
+            p += old_sk_lens[i]; \
+        } \
+    } \
+    \
+    /* Update each secondary index with change detection */ \
+    KV_FINALIZE_INDEXED_FOR_EACH(KV_PUT_SK_WITH_CHANGE_DETECT, rec_type, __VA_ARGS__) \
+    \
+    return KVSTORE_OK; \
+}
+
+// Helper to count arguments at preprocessing time
+#define KV_COUNT_ARGS(...) \
+    KV_COUNT_IMPL(__VA_ARGS__, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+
+#define KV_COUNT_IMPL(_1,_2,_3,_4,_5,_6,_7,_8, N, ...) N
+
+// For-each with record type parameter
+#define KV_FINALIZE_FOR_EACH(M, rec_type, ...) \
+    KV_FINALIZE_FOR_EACH_IMPL(M, rec_type, ##__VA_ARGS__)
+
+#define KV_FINALIZE_FOR_EACH_IMPL(M, rec_type, ...) \
+    KV_FINALIZE_GET_MACRO(__VA_ARGS__, \
+        KV_FE_8, KV_FE_7, KV_FE_6, KV_FE_5, KV_FE_4, KV_FE_3, KV_FE_2, KV_FE_1, KV_FE_0) \
+    (M, rec_type, ##__VA_ARGS__)
+
+// Indexed for-each (passes index as third parameter)
+#define KV_FINALIZE_INDEXED_FOR_EACH(M, rec_type, ...) \
+    KV_FINALIZE_INDEXED_IMPL(M, rec_type, 0, ##__VA_ARGS__)
+
+#define KV_FINALIZE_INDEXED_IMPL(M, rec_type, idx, ...) \
+    KV_FINALIZE_GET_MACRO(__VA_ARGS__, \
+        KV_IFE_8, KV_IFE_7, KV_IFE_6, KV_IFE_5, KV_IFE_4, KV_IFE_3, KV_IFE_2, KV_IFE_1, KV_IFE_0) \
+    (M, rec_type, idx, ##__VA_ARGS__)
+
+#define KV_FINALIZE_GET_MACRO(_1,_2,_3,_4,_5,_6,_7,_8, NAME, ...) NAME
+
+#define KV_FE_0(M, rt)
+#define KV_FE_1(M, rt, X) M(rt, X)
+#define KV_FE_2(M, rt, X, ...) M(rt, X) KV_FE_1(M, rt, __VA_ARGS__)
+#define KV_FE_3(M, rt, X, ...) M(rt, X) KV_FE_2(M, rt, __VA_ARGS__)
+#define KV_FE_4(M, rt, X, ...) M(rt, X) KV_FE_3(M, rt, __VA_ARGS__)
+#define KV_FE_5(M, rt, X, ...) M(rt, X) KV_FE_4(M, rt, __VA_ARGS__)
+#define KV_FE_6(M, rt, X, ...) M(rt, X) KV_FE_5(M, rt, __VA_ARGS__)
+#define KV_FE_7(M, rt, X, ...) M(rt, X) KV_FE_6(M, rt, __VA_ARGS__)
+#define KV_FE_8(M, rt, X, ...) M(rt, X) KV_FE_7(M, rt, __VA_ARGS__)
+
+#define KV_IFE_0(M, rt, idx)
+#define KV_IFE_1(M, rt, idx, X) M(rt, X, idx)
+#define KV_IFE_2(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_1(M, rt, idx+1, __VA_ARGS__)
+#define KV_IFE_3(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_2(M, rt, idx+1, __VA_ARGS__)
+#define KV_IFE_4(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_3(M, rt, idx+1, __VA_ARGS__)
+#define KV_IFE_5(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_4(M, rt, idx+1, __VA_ARGS__)
+#define KV_IFE_6(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_5(M, rt, idx+1, __VA_ARGS__)
+#define KV_IFE_7(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_6(M, rt, idx+1, __VA_ARGS__)
+#define KV_IFE_8(M, rt, idx, X, ...) M(rt, X, idx) KV_IFE_7(M, rt, idx+1, __VA_ARGS__)
+
 #ifdef __cplusplus
 }
 #endif

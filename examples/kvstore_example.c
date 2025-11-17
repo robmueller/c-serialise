@@ -51,6 +51,9 @@ SERIALISE_SECONDARY_KEY(user_record, by_username,
     SERIALISE_FIELD(username, charptr)
 )
 
+// Generate helper functions for key management and index updates
+SERIALISE_FINALIZE_INDICES(user_record, by_email, by_username)
+
 // ------------------------
 // Helper to create user
 // ------------------------
@@ -71,126 +74,6 @@ static struct user_record create_user(uint64_t id, const char *email,
 static void free_user(struct user_record *user) {
     free(user->email);
     free(user->username);
-}
-
-
-// Helper to populate key_buf with all keys from a record
-static void populate_key_buf_user_record(struct user_record *rec, kvstore_key_buf_t *key_buf) {
-    // Extract and serialize all keys
-    struct user_record_pk pk;
-    user_record_extract_pk(rec, &pk);
-    size_t pk_sz = serialise_user_record_pk_size(&pk);
-
-    struct user_record_by_email_key sk_email;
-    user_record_extract_by_email(rec, &sk_email);
-    size_t sk_email_sz = serialise_user_record_by_email_size(&sk_email);
-
-    struct user_record_by_username_key sk_username;
-    user_record_extract_by_username(rec, &sk_username);
-    size_t sk_username_sz = serialise_user_record_by_username_size(&sk_username);
-
-    // Total size
-    size_t total = 4 + pk_sz + 4 + sk_email_sz + 4 + sk_username_sz;
-
-    // Allocate/reallocate buffer
-    if (!key_buf->buf || key_buf->size < total) {
-        key_buf->buf = (char*)realloc(key_buf->buf, total);
-        key_buf->size = total;
-    }
-
-    // Serialize into buffer
-    char *p = key_buf->buf;
-
-    // PK
-    uint32_t len = (uint32_t)pk_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_user_record_pk(p, &pk); p += pk_sz;
-
-    // Email SK
-    len = (uint32_t)sk_email_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_user_record_by_email(p, &sk_email); p += sk_email_sz;
-
-    // Username SK
-    len = (uint32_t)sk_username_sz;
-    memcpy(p, &len, 4); p += 4;
-    serialise_user_record_by_username(p, &sk_username);
-}
-// Helper to put user with all indices
-static int put_user_with_indices(kvstore_txn_t *txn, struct user_record *user,
-                                 kvstore_key_buf_t *old_keys) {
-    // Put to primary table
-    int rc = kvstore_put_user_record(txn, user, old_keys);
-    if (rc != KVSTORE_OK) return rc;
-
-    // Extract and serialize primary key
-    struct user_record_pk pk;
-    user_record_extract_pk(user, &pk);
-    size_t pk_sz = serialise_user_record_pk_size(&pk);
-    char *pk_buf = (char*)alloca(pk_sz);
-    serialise_user_record_pk(pk_buf, &pk);
-
-    // Extract and serialize new secondary keys
-    struct user_record_by_email_key new_sk_email;
-    user_record_extract_by_email(user, &new_sk_email);
-    size_t new_sk_email_sz = serialise_user_record_by_email_size(&new_sk_email);
-    char *new_sk_email_buf = (char*)alloca(new_sk_email_sz);
-    serialise_user_record_by_email(new_sk_email_buf, &new_sk_email);
-
-    struct user_record_by_username_key new_sk_username;
-    user_record_extract_by_username(user, &new_sk_username);
-    size_t new_sk_username_sz = serialise_user_record_by_username_size(&new_sk_username);
-    char *new_sk_username_buf = (char*)alloca(new_sk_username_sz);
-    serialise_user_record_by_username(new_sk_username_buf, &new_sk_username);
-
-    // If updating, check for changed secondary keys and delete old entries
-    if (old_keys && old_keys->buf) {
-        char *p = old_keys->buf;
-
-        // Skip pk
-        uint32_t old_pk_len;
-        memcpy(&old_pk_len, p, 4);
-        p += 4 + old_pk_len;
-
-        // Get old email key
-        uint32_t old_sk_email_len;
-        memcpy(&old_sk_email_len, p, 4);
-        p += 4;
-        char *old_sk_email_buf = p;
-        p += old_sk_email_len;
-
-        // Get old username key
-        uint32_t old_sk_username_len;
-        memcpy(&old_sk_username_len, p, 4);
-        p += 4;
-        char *old_sk_username_buf = p;
-
-        // Check if email changed
-        bool email_changed = (old_sk_email_len != new_sk_email_sz ||
-                             memcmp(old_sk_email_buf, new_sk_email_buf, new_sk_email_sz) != 0);
-
-        // Check if username changed
-        bool username_changed = (old_sk_username_len != new_sk_username_sz ||
-                                memcmp(old_sk_username_buf, new_sk_username_buf, new_sk_username_sz) != 0);
-
-        // Delete old secondary index entries if changed
-        if (email_changed) {
-            kvstore_del_user_record_by_email_internal(txn, old_sk_email_buf, old_sk_email_len);
-        }
-
-        if (username_changed) {
-            kvstore_del_user_record_by_username_internal(txn, old_sk_username_buf, old_sk_username_len);
-        }
-    }
-
-    // Put new secondary index entries
-    rc = kvstore_put_user_record_by_email_internal(txn, user, pk_buf, pk_sz);
-    if (rc != KVSTORE_OK) return rc;
-
-    rc = kvstore_put_user_record_by_username_internal(txn, user, pk_buf, pk_sz);
-    if (rc != KVSTORE_OK) return rc;
-
-    return KVSTORE_OK;
 }
 
 // ------------------------
@@ -217,9 +100,9 @@ int main(void) {
         struct user_record charlie = create_user(1003, "charlie@example.com",
                                                 "charlie", 35, 75000);
 
-        assert(put_user_with_indices(txn, &alice, NULL) == KVSTORE_OK);
-        assert(put_user_with_indices(txn, &bob, NULL) == KVSTORE_OK);
-        assert(put_user_with_indices(txn, &charlie, NULL) == KVSTORE_OK);
+        assert(kvstore_put_user_record_with_all_indices(txn, &alice, NULL) == KVSTORE_OK);
+        assert(kvstore_put_user_record_with_all_indices(txn, &bob, NULL) == KVSTORE_OK);
+        assert(kvstore_put_user_record_with_all_indices(txn, &charlie, NULL) == KVSTORE_OK);
 
         kvstore_txn_commit(txn);
 
@@ -330,7 +213,7 @@ int main(void) {
         user.email = strdup("bob_new@example.com");
 
         // Put will detect email change and update index
-        rc = put_user_with_indices(txn, &user, &key_buf);
+        rc = kvstore_put_user_record_with_all_indices(txn, &user, &key_buf);
         assert(rc == KVSTORE_OK);
 
         printf("  After:  %s (%s)\n", user.username, user.email);

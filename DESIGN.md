@@ -98,37 +98,95 @@ SERIALISE_SECONDARY_KEY(message_record, by_mailbox_time,
 
 ---
 
-## Generated Functions
+## Generated Structures and Functions
 
-For each declaration, the macros generate a set of functions:
+### Generated Key Structures
+
+For each key definition, a dedicated struct is generated containing only the key fields:
+
+`SERIALISE_PRIMARY_KEY(user_record, pk, SERIALISE_FIELD(user_id, uint64_t))` generates:
+
+```c
+struct user_record_pk {
+    uint64_t user_id;
+};
+```
+
+`SERIALISE_SECONDARY_KEY(user_record, by_email, SERIALISE_FIELD(email, charptr))` generates:
+
+```c
+struct user_record_by_email_key {
+    char *email;  // Note: charptr maps to char*
+};
+```
+
+**Type Mapping Rules:**
+- `charptr` → `char *`
+- `timespec` → `struct timespec`
+- `uint8_t`, `uint16_t`, `uint32_t`, `uint64_t` → same
+- `int8_t`, `int16_t`, `int32_t`, `int64_t` → same
+- `size_t` → `size_t`
+- Custom types (e.g., `message_guid`) → `struct message_guid`
+
+### Key Buffer for Update Tracking
+
+To handle updates correctly (when key fields change), we use a key buffer:
+
+```c
+typedef struct {
+    char *buf;      // Buffer holding serialized keys (malloc'd, can be NULL)
+    size_t size;    // Current buffer size
+} kvstore_key_buf_t;
+
+// Initialize to empty
+#define KVSTORE_KEY_BUF_INIT { .buf = NULL, .size = 0 }
+
+// Free the buffer
+void kvstore_key_buf_free(kvstore_key_buf_t *kb);
+```
+
+**Buffer Layout:**
+```
+[pk_len:4][pk_data...][sk1_len:4][sk1_data...][sk2_len:4][sk2_data...]...
+```
 
 ### Primary Key Functions
 
 `SERIALISE_PRIMARY_KEY(record_type, pk, ...)` generates:
 
 ```c
+// Dedicated primary key struct
+struct record_type_pk {
+    // Only pk fields
+};
+
 // Calculate size needed for primary key
-size_t serialise_record_type_pk_size(struct record_type *r);
+size_t serialise_record_type_pk_size(struct record_type_pk *key);
 
 // Serialize primary key into buffer
-char* serialise_record_type_pk(char *buf, struct record_type *r);
+char* serialise_record_type_pk(char *buf, struct record_type_pk *key);
 
 // Deserialize primary key from buffer
-char* deserialise_record_type_pk(char *buf, struct record_type *r);
+char* deserialise_record_type_pk(char *buf, struct record_type_pk *key);
+
+// Extract pk fields from full record
+void record_type_extract_pk(struct record_type *rec, struct record_type_pk *pk);
 
 // Store record in KV store using primary key
-int kvstore_put_record_type(kvstore_txn_t *txn, struct record_type *r);
+int kvstore_put_record_type(kvstore_txn_t *txn, struct record_type *rec,
+                            kvstore_key_buf_t *old_keys);
 
 // Fetch record by primary key
-int kvstore_get_record_type(kvstore_txn_t *txn, struct record_type *key,
-                             struct record_type *result);
+int kvstore_get_record_type(kvstore_txn_t *txn, struct record_type_pk *key,
+                            struct record_type *result,
+                            kvstore_key_buf_t *key_buf);
 
 // Delete record by primary key
-int kvstore_del_record_type(kvstore_txn_t *txn, struct record_type *key);
+int kvstore_del_record_type(kvstore_txn_t *txn, struct record_type_pk *key);
 
 // Cursor for iterating primary key table
 kvstore_cursor_t* kvstore_cursor_record_type_pk(kvstore_txn_t *txn,
-                                                 struct record_type *start_key);
+                                                 struct record_type_pk *start_key);
 ```
 
 ### Secondary Key Functions
@@ -136,29 +194,40 @@ kvstore_cursor_t* kvstore_cursor_record_type_pk(kvstore_txn_t *txn,
 `SERIALISE_SECONDARY_KEY(record_type, index_name, ...)` generates:
 
 ```c
+// Dedicated secondary key struct
+struct record_type_index_name_key {
+    // Only index_name fields
+};
+
 // Calculate size needed for secondary key
-size_t serialise_record_type_index_name_size(struct record_type *r);
+size_t serialise_record_type_index_name_size(struct record_type_index_name_key *key);
 
 // Serialize secondary key into buffer
-char* serialise_record_type_index_name(char *buf, struct record_type *r);
+char* serialise_record_type_index_name(char *buf, struct record_type_index_name_key *key);
 
 // Deserialize secondary key from buffer
-char* deserialise_record_type_index_name(char *buf, struct record_type *r);
+char* deserialise_record_type_index_name(char *buf, struct record_type_index_name_key *key);
 
-// Add/update secondary index entry
-int kvstore_put_record_type_index_name(kvstore_txn_t *txn, struct record_type *r);
-
-// Delete secondary index entry
-int kvstore_del_record_type_index_name(kvstore_txn_t *txn, struct record_type *r);
+// Extract sk fields from full record
+void record_type_extract_index_name(struct record_type *rec,
+                                    struct record_type_index_name_key *sk);
 
 // Lookup by secondary key, returns primary key
 int kvstore_lookup_record_type_index_name(kvstore_txn_t *txn,
-                                          struct record_type *sec_key,
-                                          struct record_type *pri_key_out);
+                                          struct record_type_index_name_key *sec_key,
+                                          struct record_type_pk *pri_key_out);
 
 // Cursor for iterating secondary index
 kvstore_cursor_t* kvstore_cursor_record_type_index_name(kvstore_txn_t *txn,
-                                                         struct record_type *start_key);
+                                          struct record_type_index_name_key *start_key);
+
+// Internal: used by kvstore_put_record_type() to maintain indices
+int kvstore_put_record_type_index_name_internal(kvstore_txn_t *txn,
+                                                struct record_type *rec,
+                                                char *old_key_data, size_t old_key_len);
+int kvstore_del_record_type_index_name_internal(kvstore_txn_t *txn,
+                                                struct record_type_index_name_key *key,
+                                                struct record_type_pk *pk);
 ```
 
 ---
@@ -301,25 +370,105 @@ int kvstore_put_user_record(kvstore_txn_t *txn, struct user_record *r) {
 }
 ```
 
-### Secondary Index Maintenance
+### Update Logic with Key Change Detection
 
-When putting/deleting records, secondary indices must be updated:
+The `kvstore_put_record_type()` function handles three scenarios:
+
+**1. Insert (old_keys is NULL or empty):**
+- Store record in primary table
+- Add all secondary index entries
+
+**2. Update with no key changes:**
+- Update primary table value only
+- No secondary index changes needed
+
+**3. Update with key changes:**
+- If primary key changed:
+  - Delete old primary key entry
+  - Delete all old secondary index entries
+  - Insert new primary key entry
+  - Insert all new secondary index entries
+- If primary key unchanged but secondary key(s) changed:
+  - Update primary table value
+  - For each changed secondary key:
+    - Delete old secondary index entry
+    - Insert new secondary index entry
+
+**Implementation pseudocode:**
 
 ```c
-// User calls this high-level function
-int kvstore_put_user_record_all(kvstore_txn_t *txn, struct user_record *r) {
-    int rc;
+int kvstore_put_user_record(kvstore_txn_t *txn, struct user_record *rec,
+                            kvstore_key_buf_t *old_keys) {
+    // Serialize new keys
+    struct user_record_pk new_pk;
+    user_record_extract_pk(rec, &new_pk);
+    size_t new_pk_sz = serialise_user_record_pk_size(&new_pk);
+    char *new_pk_buf = alloca(new_pk_sz);
+    serialise_user_record_pk(new_pk_buf, &new_pk);
 
-    // Store in primary table
-    rc = kvstore_put_user_record(txn, r);
-    if (rc != KVSTORE_OK) return rc;
+    struct user_record_by_email_key new_sk_email;
+    user_record_extract_by_email(rec, &new_sk_email);
+    size_t new_sk_email_sz = serialise_user_record_by_email_size(&new_sk_email);
+    char *new_sk_email_buf = alloca(new_sk_email_sz);
+    serialise_user_record_by_email(new_sk_email_buf, &new_sk_email);
 
-    // Update all secondary indices
-    rc = kvstore_put_user_record_by_email(txn, r);
-    if (rc != KVSTORE_OK) return rc;
+    // Similar for by_username...
 
-    rc = kvstore_put_user_record_by_username(txn, r);
-    if (rc != KVSTORE_OK) return rc;
+    // Compare with old keys if provided
+    if (old_keys && old_keys->buf) {
+        char *p = old_keys->buf;
+        uint32_t old_pk_len; memcpy(&old_pk_len, p, 4); p += 4;
+        char *old_pk_buf = p; p += old_pk_len;
+
+        uint32_t old_sk_email_len; memcpy(&old_sk_email_len, p, 4); p += 4;
+        char *old_sk_email_buf = p; p += old_sk_email_len;
+
+        // Similar for other sks...
+
+        // Check if primary key changed
+        int pk_changed = (old_pk_len != new_pk_sz ||
+                         memcmp(old_pk_buf, new_pk_buf, new_pk_sz) != 0);
+
+        if (pk_changed) {
+            // Delete old primary and all old secondary indices
+            kvstore_txn_del(txn, "user_record_pk",
+                           &(kvstore_val_t){old_pk_buf, old_pk_len});
+            kvstore_del_user_record_by_email_internal(txn, old_sk_email_buf,
+                                                      old_pk_buf, old_pk_len);
+            // Similar for other sks...
+
+            // Insert new primary and all new secondary indices
+            // (fall through to insert logic below)
+        } else {
+            // PK unchanged, check each SK
+            int sk_email_changed = (old_sk_email_len != new_sk_email_sz ||
+                                   memcmp(old_sk_email_buf, new_sk_email_buf,
+                                          new_sk_email_sz) != 0);
+            if (sk_email_changed) {
+                kvstore_del_user_record_by_email_internal(txn, old_sk_email_buf,
+                                                          old_pk_buf, old_pk_len);
+                kvstore_put_user_record_by_email_internal(txn, rec,
+                                                          new_sk_email_buf, new_sk_email_sz);
+            }
+            // Similar for other sks...
+        }
+    }
+
+    // Store/update primary table
+    size_t val_sz = serialise_user_record_size(rec);
+    char *val_buf = alloca(val_sz);
+    serialise_user_record(val_buf, rec);
+
+    kvstore_val_t key = { new_pk_buf, new_pk_sz };
+    kvstore_val_t val = { val_buf, val_sz };
+    kvstore_txn_put(txn, "user_record_pk", &key, &val);
+
+    // Add/update secondary indices (if new or pk changed)
+    if (!old_keys || !old_keys->buf || pk_changed) {
+        kvstore_put_user_record_by_email_internal(txn, rec,
+                                                  new_sk_email_buf, new_sk_email_sz);
+        // Similar for other sks...
+    }
 
     return KVSTORE_OK;
 }
@@ -345,19 +494,19 @@ struct user_record user = {
 };
 clock_gettime(CLOCK_REALTIME, &user.created);
 
-// Insert into KV store (primary + all secondary indices)
-kvstore_put_user_record_all(txn, &user);
+// Insert into KV store (NULL key_buf = new insert)
+kvstore_put_user_record(txn, &user, NULL);
 
-// Commit
 kvstore_txn_commit(txn);
 
 // --- Later: lookup by primary key ---
 txn = kvstore_txn_begin(db, 0);
 
-struct user_record key = { .user_id = 12345 };
+struct user_record_pk key = { .user_id = 12345 };
 struct user_record result = {0};
 
-if (kvstore_get_user_record(txn, &key, &result) == KVSTORE_OK) {
+// Don't need key_buf for read-only lookup
+if (kvstore_get_user_record(txn, &key, &result, NULL) == KVSTORE_OK) {
     printf("Found user: %s (%s)\n", result.username, result.email);
 }
 
@@ -370,10 +519,10 @@ kvstore_txn_commit(txn);
 txn = kvstore_txn_begin(db, 0);
 
 // Search by email (secondary index)
-struct user_record email_key = {
+struct user_record_by_email_key email_key = {
     .email = "alice@example.com"
 };
-struct user_record pri_key = {0};
+struct user_record_pk pri_key = {0};
 
 // First: lookup secondary index to get primary key
 int rc = kvstore_lookup_user_record_by_email(txn, &email_key, &pri_key);
@@ -381,7 +530,7 @@ int rc = kvstore_lookup_user_record_by_email(txn, &email_key, &pri_key);
 if (rc == KVSTORE_OK) {
     // Second: lookup primary table to get full record
     struct user_record full_record = {0};
-    rc = kvstore_get_user_record(txn, &pri_key, &full_record);
+    rc = kvstore_get_user_record(txn, &pri_key, &full_record, NULL);
 
     if (rc == KVSTORE_OK) {
         printf("User ID: %llu, Balance: %llu\n",
@@ -398,7 +547,7 @@ kvstore_txn_commit(txn);
 txn = kvstore_txn_begin(db, 0);
 
 // Iterate all users in primary key order
-struct user_record start_key = { .user_id = 0 };
+struct user_record_pk start_key = { .user_id = 0 };
 kvstore_cursor_t *cur = kvstore_cursor_user_record_pk(txn, &start_key);
 
 kvstore_val_t key_val, rec_val;
@@ -422,7 +571,7 @@ kvstore_txn_commit(txn);
 // Iterate messages in mailbox 42, ordered by received time
 txn = kvstore_txn_begin(db, 0);
 
-struct message_record start = {
+struct message_record_by_mailbox_time_key start = {
     .mailbox_id = 42,
     .received = { .tv_sec = 0, .tv_nsec = 0 }
 };
@@ -434,12 +583,12 @@ while (kvstore_cursor_get(cur, &key_val, &pk_val) == KVSTORE_OK) {
     // key_val contains the compound key (mailbox_id + received)
     // pk_val contains the primary key (mailbox_id + uid)
 
-    struct message_record pk = {0};
+    struct message_record_pk pk = {0};
     deserialise_message_record_pk(pk_val.data, &pk);
 
     // Now fetch full record
     struct message_record full = {0};
-    kvstore_get_message_record(txn, &pk, &full);
+    kvstore_get_message_record(txn, &pk, &full, NULL);
 
     // Check if still in same mailbox
     if (full.mailbox_id != 42)
@@ -458,15 +607,64 @@ kvstore_txn_commit(txn);
 
 ---
 
-## Macro Definitions (Outline)
+## Macro Definitions
+
+### Type Mapping from Serialization Tags to C Types
+
+To generate key structs, we need to map from serialization type tags (e.g., `charptr`, `u64`) back to C types:
+
+```c
+// Map serialization tag to C type for struct field declarations
+#define SER_CTYPE_u8       uint8_t
+#define SER_CTYPE_u16      uint16_t
+#define SER_CTYPE_u32      uint32_t
+#define SER_CTYPE_u64      uint64_t
+#define SER_CTYPE_i8       int8_t
+#define SER_CTYPE_i16      int16_t
+#define SER_CTYPE_i32      int32_t
+#define SER_CTYPE_i64      int64_t
+#define SER_CTYPE_size     size_t
+#define SER_CTYPE_charptr  char*
+#define SER_CTYPE_timespec struct timespec
+
+// For custom types, need to define:
+// #define SER_CTYPE_message_guid struct message_guid
+```
+
+### Key Struct Generation
+
+```c
+// Generate a struct field declaration from a field spec
+#define KEY_FIELD_DECL(tuple) KEY_FIELD_DECL_I tuple
+#define KEY_FIELD_DECL_I(kind, ...) SER_CAT(KEY_FIELD_DECL_, kind)(__VA_ARGS__)
+
+#define KEY_FIELD_DECL_SCALAR(name, type) \
+    SER_CTYPE_##type name;
+
+#define KEY_FIELD_DECL_ARRAY(name, type, count) \
+    SER_CTYPE_##type name[count];
+
+// Generate complete key struct
+#define GENERATE_KEY_STRUCT(struct_name, ...) \
+    struct struct_name { \
+        FOR_EACH(KEY_FIELD_DECL, __VA_ARGS__) \
+    };
+```
 
 ### SERIALISE_PRIMARY_KEY
 
 ```c
 #define SERIALISE_PRIMARY_KEY(name, key_name, ...) \
-    /* Generate key serialization functions */ \
+    /* Generate struct name_pk with only pk fields */ \
+    GENERATE_KEY_STRUCT(SER_CAT(name, _pk), __VA_ARGS__) \
+    \
+    /* Generate serialization functions for the key */ \
     SERIALISE_KEY_FUNCS(name, key_name, __VA_ARGS__) \
-    /* Generate KV put/get/del for primary table */ \
+    \
+    /* Generate extractor: copies fields from full struct to pk struct */ \
+    GENERATE_KEY_EXTRACTOR(name, key_name, __VA_ARGS__) \
+    \
+    /* Generate KV operations */ \
     KVSTORE_PRIMARY_OPS(name, key_name)
 ```
 
@@ -474,27 +672,120 @@ kvstore_txn_commit(txn);
 
 ```c
 #define SERIALISE_SECONDARY_KEY(name, index_name, ...) \
-    /* Generate secondary key serialization functions */ \
-    SERIALISE_KEY_FUNCS(name, index_name, __VA_ARGS__) \
-    /* Generate KV put/del/lookup for secondary table */ \
+    /* Generate struct name_index_name_key with only sk fields */ \
+    GENERATE_KEY_STRUCT(SER_CAT(SER_CAT(name, _), SER_CAT(index_name, _key)), \
+                        __VA_ARGS__) \
+    \
+    /* Generate serialization functions for the key */ \
+    SERIALISE_KEY_FUNCS_SK(name, index_name, __VA_ARGS__) \
+    \
+    /* Generate extractor */ \
+    GENERATE_KEY_EXTRACTOR_SK(name, index_name, __VA_ARGS__) \
+    \
+    /* Generate KV operations */ \
     KVSTORE_SECONDARY_OPS(name, index_name)
+```
+
+### Key Extraction Functions
+
+```c
+// Generate function to copy fields from full record to key struct
+#define KEY_EXTRACT_STMT(tuple) KEY_EXTRACT_STMT_I tuple
+#define KEY_EXTRACT_STMT_I(kind, ...) SER_CAT(KEY_EXTRACT_, kind)(__VA_ARGS__)
+
+#define KEY_EXTRACT_SCALAR(name, type) \
+    do { key->name = rec->name; } while (0)
+
+#define KEY_EXTRACT_ARRAY(name, type, count) \
+    do { memcpy(key->name, rec->name, sizeof(key->name)); } while (0)
+
+#define GENERATE_KEY_EXTRACTOR(name, key_name, ...) \
+    static inline void SER_CAT(name, _extract_pk)( \
+        struct name *rec, struct SER_CAT(name, _pk) *key) { \
+        FOR_EACH(KEY_EXTRACT_STMT, __VA_ARGS__); \
+    }
 ```
 
 ### Internal Helper Macros
 
 ```c
-// Generate size/encode/decode functions for a key
+// Generate size/encode/decode functions for a key (similar to SERIALISE)
 #define SERIALISE_KEY_FUNCS(name, key_name, ...) \
-    /* Similar to SERIALISE macro but for subset of fields */
+    size_t SER_CAT(serialise_, SER_CAT(name, _pk_size))( \
+        struct SER_CAT(name, _pk) *key) { \
+        size_t _sz = 0; \
+        /* Use key-> instead of r-> */ \
+        FOR_EACH(ITEM_SIZE_KEY, __VA_ARGS__); \
+        return _sz; \
+    } \
+    /* Similar for encode/decode */
 
 // Generate primary table operations
 #define KVSTORE_PRIMARY_OPS(name, key_name) \
-    /* kvstore_put_<name>, kvstore_get_<name>, kvstore_del_<name> */
+    /* kvstore_put_<name>(): handles key change detection */ \
+    /* kvstore_get_<name>(): fetches and optionally fills key_buf */ \
+    /* kvstore_del_<name>(): simple delete by pk */ \
+    /* kvstore_cursor_<name>_pk(): creates cursor */
 
 // Generate secondary table operations
 #define KVSTORE_SECONDARY_OPS(name, index_name) \
-    /* kvstore_put_<name>_<index>, kvstore_del_<name>_<index>, */
-    /* kvstore_lookup_<name>_<index> */
+    /* kvstore_lookup_<name>_<index>(): sk -> pk lookup */ \
+    /* kvstore_cursor_<name>_<index>(): iteration by sk */ \
+    /* Internal put/del helpers for index maintenance */
+```
+
+### Example Macro Expansion
+
+Input:
+```c
+SERIALISE_PRIMARY_KEY(user_record, pk,
+    SERIALISE_FIELD(user_id, uint64_t)
+)
+```
+
+Expands to:
+```c
+// 1. Key struct
+struct user_record_pk {
+    uint64_t user_id;
+};
+
+// 2. Serialization functions
+size_t serialise_user_record_pk_size(struct user_record_pk *key) {
+    size_t _sz = 0;
+    _sz += TYPE_SIZEOF(u64, key->user_id);
+    return _sz;
+}
+
+char* serialise_user_record_pk(char *buf, struct user_record_pk *key) {
+    TYPE_ENC(u64, buf, key->user_id);
+    return buf;
+}
+
+char* deserialise_user_record_pk(char *buf, struct user_record_pk *key) {
+    TYPE_DEC(u64, buf, key->user_id);
+    return buf;
+}
+
+// 3. Extractor
+static inline void user_record_extract_pk(struct user_record *rec,
+                                          struct user_record_pk *key) {
+    key->user_id = rec->user_id;
+}
+
+// 4. KV operations
+int kvstore_put_user_record(kvstore_txn_t *txn, struct user_record *rec,
+                            kvstore_key_buf_t *old_keys) {
+    // Implementation with key change detection...
+}
+
+int kvstore_get_user_record(kvstore_txn_t *txn, struct user_record_pk *key,
+                            struct user_record *result,
+                            kvstore_key_buf_t *key_buf) {
+    // Implementation...
+}
+
+// ... etc
 ```
 
 ---
@@ -559,14 +850,51 @@ c-serialise/
 
 ---
 
-## Open Questions for Refinement
+## Design Decisions and Rationale
 
-1. **Unique constraints**: Should secondary indices enforce uniqueness?
-2. **Index updates on modify**: Auto-update indices when fields change?
-3. **Prefix iteration**: Should cursors support prefix matching?
-4. **Sorting order**: Little-endian serialization provides byte-order sorting - is this desired?
-5. **Memory management**: Who owns buffers? Stack (alloca) vs heap (malloc)?
-6. **Error handling**: Return codes vs exceptions vs callbacks?
+### ✅ Index updates on modify
+**Decision:** Auto-detect key changes using `kvstore_key_buf_t`
+**Rationale:** The key buffer mechanism elegantly handles all update scenarios (insert, update with/without key changes) without requiring user code to manually track which indices changed.
+
+### ✅ Memory management
+**Decision:**
+- Key serialization buffers: Stack (`alloca`) - short-lived, no cleanup needed
+- Key buffer tracking: Heap (`malloc`) - user-owned, explicit cleanup with `kvstore_key_buf_free()`
+- Full record buffers: Stack (`alloca`) for temporary serialization
+
+**Rationale:** Stack allocation avoids heap fragmentation for hot-path operations. Key buffer is heap-allocated because it's optional and persists across function calls.
+
+### ✅ Dedicated key structs
+**Decision:** Generate `struct record_type_pk` and `struct record_type_index_name_key`
+**Rationale:** Type-safe, minimal memory footprint, clear API semantics.
+
+### Open Questions for Implementation
+
+1. **Unique constraints**: Should secondary indices enforce uniqueness, or allow duplicates?
+   - Current design: Allow duplicates (multiple records can have same secondary key value)
+   - Alternative: Add `SERIALISE_UNIQUE_KEY` macro variant
+
+2. **Prefix iteration**: Should cursors support prefix matching for efficient range queries?
+   - Example: Find all users with email ending in "@example.com"
+   - Could add `kvstore_cursor_*_prefix()` variants
+
+3. **Sorting order**: Little-endian serialization provides byte-order sorting
+   - For integers: Natural ascending order
+   - For timestamps: Chronological order
+   - For strings: Lexicographic order
+   - Is this desired, or should we support descending/custom comparators?
+
+4. **Error handling**: Return codes (current design) vs exceptions vs callbacks?
+   - Current: Return `KVSTORE_OK`, `KVSTORE_NOTFOUND`, `KVSTORE_ERROR`, etc.
+   - Could add optional error callback for detailed diagnostics
+
+5. **Transaction isolation**: Should reads in a transaction see uncommitted writes?
+   - Affects read-your-own-writes semantics
+   - Backend-dependent (LMDB vs RocksDB behavior differs)
+
+6. **Bulk operations**: Should we provide batch insert/delete helpers?
+   - `kvstore_put_batch()` for multiple records
+   - Useful for bulk loading scenarios
 
 ---
 

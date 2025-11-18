@@ -10,11 +10,17 @@ EXAMPLES_DIR = examples
 KVSTORE_SRCS = $(SRC_DIR)/kvstore.c $(SRC_DIR)/kvstore_mem.c
 KVSTORE_OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(KVSTORE_SRCS))
 
+# Parser source files
+PARSER_DIR = parsers
+PARSER_SRCS = $(PARSER_DIR)/email_address.c
+PARSER_OBJS = $(patsubst $(PARSER_DIR)/%.c,$(BUILD_DIR)/%.o,$(PARSER_SRCS))
+
 # Examples
 EXAMPLES = $(BUILD_DIR)/kvstore_example \
            $(BUILD_DIR)/kvstore_complex_test \
            $(BUILD_DIR)/index_record_example \
-           $(BUILD_DIR)/nested_struct_example
+           $(BUILD_DIR)/nested_struct_example \
+           $(BUILD_DIR)/email_address_test
 
 .PHONY: all clean examples
 
@@ -25,6 +31,10 @@ $(BUILD_DIR):
 
 # Compile source files
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c include/*.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compile parser files
+$(BUILD_DIR)/%.o: $(PARSER_DIR)/%.c $(PARSER_DIR)/*.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Build kvstore example
@@ -42,6 +52,10 @@ $(BUILD_DIR)/index_record_example: $(EXAMPLES_DIR)/index_record_example.c includ
 # Build nested struct example
 $(BUILD_DIR)/nested_struct_example: $(EXAMPLES_DIR)/nested_struct_example.c include/serialise.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
+# Build email address parser test
+$(BUILD_DIR)/email_address_test: $(EXAMPLES_DIR)/email_address_test.c $(PARSER_OBJS) $(PARSER_DIR)/*.h
+	$(CC) $(CFLAGS) $< $(PARSER_OBJS) -o $@ $(LDFLAGS)
 
 examples: $(EXAMPLES)
 
@@ -61,6 +75,9 @@ run-index: $(BUILD_DIR)/index_record_example
 run-nested: $(BUILD_DIR)/nested_struct_example
 	./$(BUILD_DIR)/nested_struct_example
 
+run-email: $(BUILD_DIR)/email_address_test
+	./$(BUILD_DIR)/email_address_test
+
 run-all: $(EXAMPLES)
 	@echo "=== Running index_record_example ==="
 	@./$(BUILD_DIR)/index_record_example
@@ -73,3 +90,6 @@ run-all: $(EXAMPLES)
 	@echo ""
 	@echo "=== Running nested_struct_example ==="
 	@./$(BUILD_DIR)/nested_struct_example
+	@echo ""
+	@echo "=== Running email_address_test ==="
+	@./$(BUILD_DIR)/email_address_test

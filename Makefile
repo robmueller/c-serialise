@@ -13,7 +13,8 @@ KVSTORE_OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(KVSTORE_SRCS))
 # Examples
 EXAMPLES = $(BUILD_DIR)/kvstore_example \
            $(BUILD_DIR)/kvstore_complex_test \
-           $(BUILD_DIR)/index_record_example
+           $(BUILD_DIR)/index_record_example \
+           $(BUILD_DIR)/nested_struct_example
 
 .PHONY: all clean examples
 
@@ -38,6 +39,10 @@ $(BUILD_DIR)/kvstore_complex_test: $(EXAMPLES_DIR)/kvstore_complex_test.c $(KVST
 $(BUILD_DIR)/index_record_example: $(EXAMPLES_DIR)/index_record_example.c include/serialise.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
+# Build nested struct example
+$(BUILD_DIR)/nested_struct_example: $(EXAMPLES_DIR)/nested_struct_example.c include/serialise.h
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
+
 examples: $(EXAMPLES)
 
 clean:
@@ -53,6 +58,9 @@ run-complex: $(BUILD_DIR)/kvstore_complex_test
 run-index: $(BUILD_DIR)/index_record_example
 	./$(BUILD_DIR)/index_record_example
 
+run-nested: $(BUILD_DIR)/nested_struct_example
+	./$(BUILD_DIR)/nested_struct_example
+
 run-all: $(EXAMPLES)
 	@echo "=== Running index_record_example ==="
 	@./$(BUILD_DIR)/index_record_example
@@ -62,3 +70,6 @@ run-all: $(EXAMPLES)
 	@echo ""
 	@echo "=== Running kvstore_complex_test ==="
 	@./$(BUILD_DIR)/kvstore_complex_test
+	@echo ""
+	@echo "=== Running nested_struct_example ==="
+	@./$(BUILD_DIR)/nested_struct_example

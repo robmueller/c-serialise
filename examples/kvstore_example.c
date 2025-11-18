@@ -27,7 +27,7 @@ struct user_record {
 };
 
 // Define serialization for the full struct
-SERIALISE(user_record, struct user_record,
+SERIALISE(user_record,
     SERIALISE_FIELD(user_id, uint64_t),
     SERIALISE_FIELD(email, charptr),
     SERIALISE_FIELD(username, charptr),

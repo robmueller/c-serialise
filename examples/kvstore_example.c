@@ -39,23 +39,27 @@ SERIALISE(user_record, struct user_record,
 // Declare keys forward (enables automatic key_buf population in kvstore_get)
 SERIALISE_DECLARE_KEYS(user_record)
 
-// Define primary key (user_id)
-SERIALISE_PRIMARY_KEY(user_record, pk,
+// Define primary key (user_id) with prefix "user:"
+SERIALISE_PRIMARY_KEY(user_record, "user:",
     SERIALISE_FIELD(user_id, uint64_t)
 )
 
-// Define secondary index by email
-SERIALISE_SECONDARY_KEY(user_record, by_email,
+// Define secondary index by email with prefix "user_email:"
+SERIALISE_SECONDARY_KEY(user_record, "user_email:", by_email,
     SERIALISE_FIELD(email, charptr)
 )
 
-// Define secondary index by username
-SERIALISE_SECONDARY_KEY(user_record, by_username,
+// Define secondary index by username with prefix "user_username:"
+SERIALISE_SECONDARY_KEY(user_record, "user_username:", by_username,
     SERIALISE_FIELD(username, charptr)
 )
 
 // Generate helper functions for key management and index updates
-SERIALISE_FINALIZE_INDICES(user_record, by_email, by_username)
+// Arguments are pairs of (index_name, prefix)
+SERIALISE_FINALIZE_INDICES(user_record,
+    by_email, "user_email:",
+    by_username, "user_username:"
+)
 
 // ------------------------
 // Helper to create user
@@ -173,8 +177,17 @@ int main(void) {
         assert(cur != NULL);
 
         int count = 0;
+        const char *prefix = "user:";
+        size_t prefix_len = strlen(prefix);
+
         kvstore_val_t key_val, rec_val;
         while (kvstore_cursor_get(cur, &key_val, &rec_val) == KVSTORE_OK) {
+            // Check if key still has the correct prefix - stop if not
+            if (key_val.size < prefix_len ||
+                memcmp(key_val.data, prefix, prefix_len) != 0) {
+                break;
+            }
+
             struct user_record rec = {0};
             deserialise_user_record((char*)rec_val.data, &rec);
 

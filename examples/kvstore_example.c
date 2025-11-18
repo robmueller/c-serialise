@@ -36,6 +36,9 @@ SERIALISE(user_record, struct user_record,
     SERIALISE_FIELD(account_balance, uint64_t)
 )
 
+// Declare keys forward (enables automatic key_buf population in kvstore_get)
+SERIALISE_DECLARE_KEYS(user_record)
+
 // Define primary key (user_id)
 SERIALISE_PRIMARY_KEY(user_record, pk,
     SERIALISE_FIELD(user_id, uint64_t)
@@ -200,10 +203,8 @@ int main(void) {
         struct user_record user = {0};
         kvstore_key_buf_t key_buf = KVSTORE_KEY_BUF_INIT;
 
-        int rc = kvstore_get_user_record(txn, &key, &user, NULL);
-        
-        // Populate key_buf with all current keys
-        populate_key_buf_user_record(&user, &key_buf);
+        // Get user and automatically populate key_buf for change detection
+        int rc = kvstore_get_user_record(txn, &key, &user, &key_buf);
         assert(rc == KVSTORE_OK);
 
         printf("  Before: %s (%s)\n", user.username, user.email);

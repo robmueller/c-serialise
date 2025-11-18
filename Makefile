@@ -12,7 +12,7 @@ KVSTORE_OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(KVSTORE_SRCS))
 
 # Parser source files
 PARSER_DIR = parsers
-PARSER_SRCS = $(PARSER_DIR)/email_address.c
+PARSER_SRCS = $(PARSER_DIR)/email_address.c $(PARSER_DIR)/mime_parser.c
 PARSER_OBJS = $(patsubst $(PARSER_DIR)/%.c,$(BUILD_DIR)/%.o,$(PARSER_SRCS))
 
 # Examples
@@ -20,7 +20,8 @@ EXAMPLES = $(BUILD_DIR)/kvstore_example \
            $(BUILD_DIR)/kvstore_complex_test \
            $(BUILD_DIR)/index_record_example \
            $(BUILD_DIR)/nested_struct_example \
-           $(BUILD_DIR)/email_address_test
+           $(BUILD_DIR)/email_address_test \
+           $(BUILD_DIR)/mime_parser_test
 
 .PHONY: all clean examples
 
@@ -54,7 +55,11 @@ $(BUILD_DIR)/nested_struct_example: $(EXAMPLES_DIR)/nested_struct_example.c incl
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 # Build email address parser test
-$(BUILD_DIR)/email_address_test: $(EXAMPLES_DIR)/email_address_test.c $(PARSER_OBJS) $(PARSER_DIR)/*.h
+$(BUILD_DIR)/email_address_test: $(EXAMPLES_DIR)/email_address_test.c $(BUILD_DIR)/email_address.o $(PARSER_DIR)/*.h
+	$(CC) $(CFLAGS) $< $(BUILD_DIR)/email_address.o -o $@ $(LDFLAGS)
+
+# Build MIME parser test
+$(BUILD_DIR)/mime_parser_test: $(EXAMPLES_DIR)/mime_parser_test.c $(PARSER_OBJS) $(PARSER_DIR)/*.h
 	$(CC) $(CFLAGS) $< $(PARSER_OBJS) -o $@ $(LDFLAGS)
 
 examples: $(EXAMPLES)
@@ -78,6 +83,9 @@ run-nested: $(BUILD_DIR)/nested_struct_example
 run-email: $(BUILD_DIR)/email_address_test
 	./$(BUILD_DIR)/email_address_test
 
+run-mime: $(BUILD_DIR)/mime_parser_test
+	./$(BUILD_DIR)/mime_parser_test
+
 run-all: $(EXAMPLES)
 	@echo "=== Running index_record_example ==="
 	@./$(BUILD_DIR)/index_record_example
@@ -93,3 +101,6 @@ run-all: $(EXAMPLES)
 	@echo ""
 	@echo "=== Running email_address_test ==="
 	@./$(BUILD_DIR)/email_address_test
+	@echo ""
+	@echo "=== Running mime_parser_test ==="
+	@./$(BUILD_DIR)/mime_parser_test

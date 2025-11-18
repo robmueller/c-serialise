@@ -333,6 +333,50 @@ static inline uint64_t SER_BE64(uint64_t x) {
 } while (0)
 
 // ------------------------
+// Struct pointer (array of structs) support
+// ------------------------
+// SERIALISE_FIELD_PTR(name, struct_type, count_field) allows serializing a pointer
+// to an array of structs, where count_field contains the number of elements.
+// Example:
+//   struct user_record { uint64_t user_id; char *username; };
+//   SERIALISE(user_record, SERIALISE_FIELD(user_id, uint64_t), SERIALISE_FIELD(username, charptr))
+//
+//   struct customer_record {
+//     uint32_t num_users;
+//     struct user_record *users;
+//   };
+//   SERIALISE(customer_record,
+//     SERIALISE_FIELD(num_users, uint32_t),
+//     SERIALISE_FIELD_PTR(users, user_record, num_users)
+//   )
+
+#define SERIALISE_FIELD_PTR(name, struct_type, count_field) SERIAL_TUPLE(STRUCTPTR, name, struct_type, count_field)
+
+// STRUCTPTR handlers: name, struct_type, count_field
+#define ITEM_SIZE_STRUCTPTR(name, struct_type, count_field) do { \
+  for (uint32_t __i = 0; __i < r->count_field; __i++) { \
+    _sz += SER_CAT(serialise_, SER_CAT(struct_type, _size))(&((r->name)[__i])); \
+  } \
+} while (0)
+
+#define ITEM_ENC_STRUCTPTR(name, struct_type, count_field) do { \
+  for (uint32_t __i = 0; __i < r->count_field; __i++) { \
+    buf = SER_CAT(serialise_, struct_type)(buf, &((r->name)[__i])); \
+  } \
+} while (0)
+
+#define ITEM_DEC_STRUCTPTR(name, struct_type, count_field) do { \
+  if (r->count_field > 0) { \
+    r->name = (struct struct_type *)SERIAL_ALLOC(sizeof(struct struct_type) * r->count_field); \
+    for (uint32_t __i = 0; __i < r->count_field; __i++) { \
+      buf = SER_CAT(deserialise_, struct_type)(buf, &((r->name)[__i])); \
+    } \
+  } else { \
+    r->name = NULL; \
+  } \
+} while (0)
+
+// ------------------------
 // Codegen macro
 // ------------------------
 

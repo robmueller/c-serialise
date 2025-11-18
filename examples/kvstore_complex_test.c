@@ -53,35 +53,41 @@ SERIALISE(message_record, struct message_record,
 // Declare keys forward (enables automatic key_buf population in kvstore_get)
 SERIALISE_DECLARE_KEYS(message_record)
 
-// Compound primary key: mailbox_id + uid
-SERIALISE_PRIMARY_KEY(message_record, pk,
+// Compound primary key: mailbox_id + uid with prefix "msg:"
+SERIALISE_PRIMARY_KEY(message_record, "msg:",
     SERIALISE_FIELD(mailbox_id, uint32_t),
     SERIALISE_FIELD(uid, uint32_t)
 )
 
-// Secondary index: by sender
-SERIALISE_SECONDARY_KEY(message_record, by_sender,
+// Secondary index: by sender with prefix "msg_sender:"
+SERIALISE_SECONDARY_KEY(message_record, "msg_sender:", by_sender,
     SERIALISE_FIELD(sender, charptr)
 )
 
-// Secondary index: by recipient
-SERIALISE_SECONDARY_KEY(message_record, by_recipient,
+// Secondary index: by recipient with prefix "msg_recipient:"
+SERIALISE_SECONDARY_KEY(message_record, "msg_recipient:", by_recipient,
     SERIALISE_FIELD(recipient, charptr)
 )
 
-// Secondary index: by thread_id
-SERIALISE_SECONDARY_KEY(message_record, by_thread,
+// Secondary index: by thread_id with prefix "msg_thread:"
+SERIALISE_SECONDARY_KEY(message_record, "msg_thread:", by_thread,
     SERIALISE_FIELD(thread_id, uint64_t)
 )
 
-// Compound secondary index: mailbox_id + received (for mailbox time-ordered view)
-SERIALISE_SECONDARY_KEY(message_record, by_mailbox_time,
+// Compound secondary index: mailbox_id + received (for mailbox time-ordered view) with prefix "msg_mbox_time:"
+SERIALISE_SECONDARY_KEY(message_record, "msg_mbox_time:", by_mailbox_time,
     SERIALISE_FIELD(mailbox_id, uint32_t),
     SERIALISE_FIELD(received, timespec)
 )
 
 // Generate helper functions for key management and index updates
-SERIALISE_FINALIZE_INDICES(message_record, by_sender, by_recipient, by_thread, by_mailbox_time)
+// Arguments are pairs of (index_name, prefix)
+SERIALISE_FINALIZE_INDICES(message_record,
+    by_sender, "msg_sender:",
+    by_recipient, "msg_recipient:",
+    by_thread, "msg_thread:",
+    by_mailbox_time, "msg_mbox_time:"
+)
 
 // ------------------------
 // Helper functions

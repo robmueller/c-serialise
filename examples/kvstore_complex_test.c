@@ -36,7 +36,7 @@ struct message_record {
 };
 
 // Full record serialization
-SERIALISE(message_record, struct message_record,
+SERIALISE(message_record,
     SERIALISE_FIELD(mailbox_id, uint32_t),
     SERIALISE_FIELD(uid, uint32_t),
     SERIALISE_FIELD(subject, charptr),

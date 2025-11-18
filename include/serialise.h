@@ -336,24 +336,24 @@ static inline uint64_t SER_BE64(uint64_t x) {
 // Codegen macro
 // ------------------------
 
-#define SERIALISE(name, T, ...) \
-size_t SER_CAT(serialise_, SER_CAT(name, _size))(T *r) { \
+#define SERIALISE(name, ...) \
+size_t SER_CAT(serialise_, SER_CAT(name, _size))(struct name *r) { \
   size_t _sz = 0; \
-  SERIALISE_HOOK_BEFORE_SIZE(name, T, r); \
+  SERIALISE_HOOK_BEFORE_SIZE(name, struct name, r); \
   FOR_EACH(ITEM_SIZE, __VA_ARGS__); \
-  SERIALISE_HOOK_AFTER_SIZE(name, T, r, _sz); \
+  SERIALISE_HOOK_AFTER_SIZE(name, struct name, r, _sz); \
   return _sz; \
 } \
-char* SER_CAT(serialise_, name)(char *buf, T *r) { \
-  SERIALISE_HOOK_BEFORE_ENCODE(name, T, r, buf); \
+char* SER_CAT(serialise_, name)(char *buf, struct name *r) { \
+  SERIALISE_HOOK_BEFORE_ENCODE(name, struct name, r, buf); \
   FOR_EACH(ITEM_ENC, __VA_ARGS__); \
-  SERIALISE_HOOK_AFTER_ENCODE(name, T, r, buf); \
+  SERIALISE_HOOK_AFTER_ENCODE(name, struct name, r, buf); \
   return buf; \
 } \
-char* SER_CAT(deserialise_, name)(char *buf, T *r) { \
-  SERIALISE_HOOK_BEFORE_DECODE(name, T, r, buf); \
+char* SER_CAT(deserialise_, name)(char *buf, struct name *r) { \
+  SERIALISE_HOOK_BEFORE_DECODE(name, struct name, r, buf); \
   FOR_EACH(ITEM_DEC, __VA_ARGS__); \
-  SERIALISE_HOOK_AFTER_DECODE(name, T, r, buf); \
+  SERIALISE_HOOK_AFTER_DECODE(name, struct name, r, buf); \
   return buf; \
 }
 

@@ -292,23 +292,10 @@ static inline int SER_CAT(kvstore_get_, rec_type)( \
     /* Deserialize result */ \
     SER_CAT(deserialise_, rec_type)((char*)v.data, result); \
     \
-    /* If key_buf provided, store serialized keys for change detection */ \
+    /* If key_buf provided, populate all keys for change detection */ \
+    /* NOTE: Requires SERIALISE_FINALIZE_INDICES to be called to define populate_key_buf_* */ \
     if (key_buf) { \
-        /* Total size: pk_len(4) + pk_data + [sk_len(4) + sk_data]... */ \
-        size_t total = 4 + key_sz; \
-        /* Note: Secondary key sizes added by _populate_key_buf helper */ \
-        \
-        if (!key_buf->buf || key_buf->size < total) { \
-            key_buf->buf = (char*)realloc(key_buf->buf, total); \
-            key_buf->size = total; \
-        } \
-        \
-        char *p = key_buf->buf; \
-        uint32_t len = (uint32_t)key_sz; \
-        memcpy(p, &len, 4); p += 4; \
-        memcpy(p, key_buf_tmp, key_sz); p += key_sz; \
-        \
-        /* Secondary keys populated by helper (if exists) */ \
+        SER_CAT(populate_key_buf_, rec_type)(result, key_buf); \
     } \
     \
     return KVSTORE_OK; \
@@ -475,6 +462,11 @@ static inline int SER_CAT(kvstore_del_, SER_CAT(rec_type, SER_CAT(_, SER_CAT(ind
     rc = SER_CAT(kvstore_put_, SER_CAT(rec_type, SER_CAT(_, SER_CAT(sk_name, _internal))))( \
         txn, rec, pk_buf, pk_sz); \
     if (rc != KVSTORE_OK) return rc;
+
+// Forward declaration for populate_key_buf function
+// Must be called BEFORE SERIALISE_PRIMARY_KEY to enable automatic key_buf population
+#define SERIALISE_DECLARE_KEYS(rec_type) \
+    static inline void SER_CAT(populate_key_buf_, rec_type)(struct rec_type *rec, kvstore_key_buf_t *key_buf);
 
 // Generate populate_key_buf and put_with_all_indices functions
 // Usage: SERIALISE_FINALIZE_INDICES(record_type, sk1, sk2, sk3, ...)

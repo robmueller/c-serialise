@@ -44,27 +44,28 @@ extern "C" {
 #endif
 
 // ------------------------
-// Endian helpers
+// Endian helpers (Big-Endian for sortable keys)
 // ------------------------
 
 #ifndef __has_builtin
 #define __has_builtin(x) 0
 #endif
 
-#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
-#  define SER_LE16(x) (uint16_t)(x)
-#  define SER_LE32(x) (uint32_t)(x)
-#  define SER_LE64(x) (uint64_t)(x)
+// Big-endian conversion functions (for sortable numeric keys in KV stores)
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#  define SER_BE16(x) (uint16_t)(x)
+#  define SER_BE32(x) (uint32_t)(x)
+#  define SER_BE64(x) (uint64_t)(x)
 #else
 #  if __has_builtin(__builtin_bswap16) || (defined(__GNUC__) && (__GNUC__ >= 4))
-#    define SER_LE16(x) __builtin_bswap16((uint16_t)(x))
+#    define SER_BE16(x) __builtin_bswap16((uint16_t)(x))
 #  else
-static inline uint16_t SER_LE16(uint16_t x) { return (uint16_t)((x<<8)|(x>>8)); }
+static inline uint16_t SER_BE16(uint16_t x) { return (uint16_t)((x<<8)|(x>>8)); }
 #  endif
 #  if __has_builtin(__builtin_bswap32) || (defined(__GNUC__) && (__GNUC__ >= 4))
-#    define SER_LE32(x) __builtin_bswap32((uint32_t)(x))
+#    define SER_BE32(x) __builtin_bswap32((uint32_t)(x))
 #  else
-static inline uint32_t SER_LE32(uint32_t x) {
+static inline uint32_t SER_BE32(uint32_t x) {
   return ((x & 0x000000FFu) << 24) |
          ((x & 0x0000FF00u) << 8)  |
          ((x & 0x00FF0000u) >> 8)  |
@@ -72,9 +73,9 @@ static inline uint32_t SER_LE32(uint32_t x) {
 }
 #  endif
 #  if __has_builtin(__builtin_bswap64) || (defined(__GNUC__) && (__GNUC__ >= 4))
-#    define SER_LE64(x) __builtin_bswap64((uint64_t)(x))
+#    define SER_BE64(x) __builtin_bswap64((uint64_t)(x))
 #  else
-static inline uint64_t SER_LE64(uint64_t x) {
+static inline uint64_t SER_BE64(uint64_t x) {
   x = ((x & 0x00000000FFFFFFFFull) << 32) | ((x & 0xFFFFFFFF00000000ull) >> 32);
   x = ((x & 0x0000FFFF0000FFFFull) << 16) | ((x & 0xFFFF0000FFFF0000ull) >> 16);
   x = ((x & 0x00FF00FF00FF00FFull) << 8)  | ((x & 0xFF00FF00FF00FF00ull) >> 8);
@@ -83,28 +84,29 @@ static inline uint64_t SER_LE64(uint64_t x) {
 #  endif
 #endif
 
-// Copy helpers to avoid alignment issues
+// Copy helpers to avoid alignment issues (Big-Endian for sortable keys)
 #define SER_WRITE_U8(buf, v)   do { *(uint8_t*)(buf) = (uint8_t)(v); (buf) += 1; } while (0)
 #define SER_READ_U8(buf, out)  do { (out) = *(const uint8_t*)(buf); (buf) += 1; } while (0)
 
-#define SER_WRITE_U16(buf, v)  do { uint16_t __ser_u16 = SER_LE16((uint16_t)(v)); memcpy((buf), &__ser_u16, 2); (buf) += 2; } while (0)
-#define SER_READ_U16(buf, out) do { uint16_t __ser_u16; memcpy(&__ser_u16, (buf), 2); (out) = SER_LE16(__ser_u16); (buf) += 2; } while (0)
+#define SER_WRITE_U16(buf, v)  do { uint16_t __ser_u16 = SER_BE16((uint16_t)(v)); memcpy((buf), &__ser_u16, 2); (buf) += 2; } while (0)
+#define SER_READ_U16(buf, out) do { uint16_t __ser_u16; memcpy(&__ser_u16, (buf), 2); (out) = SER_BE16(__ser_u16); (buf) += 2; } while (0)
 
-#define SER_WRITE_U32(buf, v)  do { uint32_t __ser_u32 = SER_LE32((uint32_t)(v)); memcpy((buf), &__ser_u32, 4); (buf) += 4; } while (0)
-#define SER_READ_U32(buf, out) do { uint32_t __ser_u32; memcpy(&__ser_u32, (buf), 4); (out) = SER_LE32(__ser_u32); (buf) += 4; } while (0)
+#define SER_WRITE_U32(buf, v)  do { uint32_t __ser_u32 = SER_BE32((uint32_t)(v)); memcpy((buf), &__ser_u32, 4); (buf) += 4; } while (0)
+#define SER_READ_U32(buf, out) do { uint32_t __ser_u32; memcpy(&__ser_u32, (buf), 4); (out) = SER_BE32(__ser_u32); (buf) += 4; } while (0)
 
-#define SER_WRITE_U64(buf, v)  do { uint64_t __ser_u64 = SER_LE64((uint64_t)(v)); memcpy((buf), &__ser_u64, 8); (buf) += 8; } while (0)
-#define SER_READ_U64(buf, out) do { uint64_t __ser_u64; memcpy(&__ser_u64, (buf), 8); (out) = SER_LE64(__ser_u64); (buf) += 8; } while (0)
+#define SER_WRITE_U64(buf, v)  do { uint64_t __ser_u64 = SER_BE64((uint64_t)(v)); memcpy((buf), &__ser_u64, 8); (buf) += 8; } while (0)
+#define SER_READ_U64(buf, out) do { uint64_t __ser_u64; memcpy(&__ser_u64, (buf), 8); (out) = SER_BE64(__ser_u64); (buf) += 8; } while (0)
 
-// Signed rely on same byte swap as unsigned
-#define SER_WRITE_I8(buf, v)   SER_WRITE_U8(buf, (uint8_t)(v))
-#define SER_READ_I8(buf, out)  do { uint8_t __ser_i8; SER_READ_U8(buf, __ser_i8); (out) = (int8_t)__ser_i8; } while (0)
-#define SER_WRITE_I16(buf, v)  SER_WRITE_U16(buf, (uint16_t)(v))
-#define SER_READ_I16(buf, out) do { uint16_t __ser_i16; SER_READ_U16(buf, __ser_i16); (out) = (int16_t)__ser_i16; } while (0)
-#define SER_WRITE_I32(buf, v)  SER_WRITE_U32(buf, (uint32_t)(v))
-#define SER_READ_I32(buf, out) do { uint32_t __ser_i32; SER_READ_U32(buf, __ser_i32); (out) = (int32_t)__ser_i32; } while (0)
-#define SER_WRITE_I64(buf, v)  SER_WRITE_U64(buf, (uint64_t)(v))
-#define SER_READ_I64(buf, out) do { uint64_t __ser_i64; SER_READ_U64(buf, __ser_i64); (out) = (int64_t)__ser_i64; } while (0)
+// Signed integers: flip sign bit for correct sort order (negative < positive)
+// This ensures byte-wise comparison matches numeric comparison
+#define SER_WRITE_I8(buf, v)   do { uint8_t __ser_i8 = (uint8_t)(v) ^ 0x80; SER_WRITE_U8(buf, __ser_i8); } while (0)
+#define SER_READ_I8(buf, out)  do { uint8_t __ser_i8; SER_READ_U8(buf, __ser_i8); (out) = (int8_t)(__ser_i8 ^ 0x80); } while (0)
+#define SER_WRITE_I16(buf, v)  do { uint16_t __ser_i16 = (uint16_t)(v) ^ 0x8000; SER_WRITE_U16(buf, __ser_i16); } while (0)
+#define SER_READ_I16(buf, out) do { uint16_t __ser_i16; SER_READ_U16(buf, __ser_i16); (out) = (int16_t)(__ser_i16 ^ 0x8000); } while (0)
+#define SER_WRITE_I32(buf, v)  do { uint32_t __ser_i32 = (uint32_t)(v) ^ 0x80000000u; SER_WRITE_U32(buf, __ser_i32); } while (0)
+#define SER_READ_I32(buf, out) do { uint32_t __ser_i32; SER_READ_U32(buf, __ser_i32); (out) = (int32_t)(__ser_i32 ^ 0x80000000u); } while (0)
+#define SER_WRITE_I64(buf, v)  do { uint64_t __ser_i64 = (uint64_t)(v) ^ 0x8000000000000000ull; SER_WRITE_U64(buf, __ser_i64); } while (0)
+#define SER_READ_I64(buf, out) do { uint64_t __ser_i64; SER_READ_U64(buf, __ser_i64); (out) = (int64_t)(__ser_i64 ^ 0x8000000000000000ull); } while (0)
 
 // ------------------------
 // Type tags and adapters
@@ -198,9 +200,9 @@ static inline uint64_t SER_LE64(uint64_t x) {
   (l) = __ser_s; \
 } while (0)
 
-// timespec encoded compactly into 8 bytes:
-// lower 30 bits: tv_nsec (0..999,999,999)
-// upper 34 bits: tv_sec (signed, two's complement, 34-bit)
+// timespec encoded compactly into 8 bytes (sortable by time):
+// Encoded as: tv_sec (signed 64-bit with sign-flip) in high bits, tv_nsec in low bits
+// This ensures chronological ordering when used as keys
 #define TYPE_SIZEOF_timespec(v) (8u)
 
 #define TYPE_ENC_timespec(buf, v) do { \
@@ -208,12 +210,16 @@ static inline uint64_t SER_LE64(uint64_t x) {
   uint64_t __ser_nsec = (uint64_t)((v).tv_nsec) & ((1ULL<<30) - 1ULL); \
   uint64_t __ser_sec34 = ((uint64_t)__ser_sec) & ((1ULL<<34) - 1ULL); \
   uint64_t __ser_packed = (__ser_sec34 << 30) | __ser_nsec; \
+  /* Flip sign bit of entire packed value for sortable encoding */ \
+  __ser_packed ^= 0x8000000000000000ull; \
   TYPE_ENC_u64(buf, __ser_packed); \
 } while (0)
 
 #define TYPE_DEC_timespec(buf, l) do { \
   uint64_t __ser_packed; \
   TYPE_DEC_u64(buf, __ser_packed); \
+  /* Flip sign bit back */ \
+  __ser_packed ^= 0x8000000000000000ull; \
   uint64_t __ser_nsec = __ser_packed & ((1ULL<<30) - 1ULL); \
   uint64_t __ser_sec34 = (__ser_packed >> 30) & ((1ULL<<34) - 1ULL); \
   int64_t __ser_sec = ( (__ser_sec34 & (1ULL<<33)) \

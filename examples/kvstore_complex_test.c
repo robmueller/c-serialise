@@ -50,6 +50,9 @@ SERIALISE(message_record, struct message_record,
     SERIALISE_FIELD(last_modified, timespec)
 )
 
+// Declare keys forward (enables automatic key_buf population in kvstore_get)
+SERIALISE_DECLARE_KEYS(message_record)
+
 // Compound primary key: mailbox_id + uid
 SERIALISE_PRIMARY_KEY(message_record, pk,
     SERIALISE_FIELD(mailbox_id, uint32_t),
@@ -306,6 +309,9 @@ int main(void) {
         int update_indices[] = {1, 6, 9};
         int num_updates = 3;
 
+        // Hoist key_buf out of loop to reuse buffer and reduce reallocations
+        kvstore_key_buf_t key_buf = KVSTORE_KEY_BUF_INIT;
+
         for (int i = 0; i < num_updates; i++) {
             int idx = update_indices[i];
             struct message_record *msg = &test_data[idx];
@@ -316,12 +322,10 @@ int main(void) {
                 .uid = msg->uid
             };
             struct message_record current = {0};
-            kvstore_key_buf_t key_buf = KVSTORE_KEY_BUF_INIT;
 
-            int rc = kvstore_get_message_record(txn, &key, &current, NULL);
+            // Get message and automatically populate key_buf (reuses buffer from previous iteration)
+            int rc = kvstore_get_message_record(txn, &key, &current, &key_buf);
             assert(rc == KVSTORE_OK);
-
-            populate_key_buf_message_record(&current, &key_buf);
 
             // Modify sender (secondary key change)
             free(current.sender);
@@ -334,19 +338,21 @@ int main(void) {
             // Update last_modified
             current.last_modified.tv_sec = time(NULL);
 
-            // Write back
+            // Write back with change detection
             rc = kvstore_put_message_record_with_all_indices(txn, &current, &key_buf);
             assert(rc == KVSTORE_OK);
 
             printf("  Updated (%u, %u): new sender = %s\n",
                    current.mailbox_id, current.uid, current.sender);
 
-            kvstore_key_buf_free(&key_buf);
             free_message(&current);
         }
 
+        // Free key_buf once after all updates
+        kvstore_key_buf_free(&key_buf);
+
         kvstore_txn_commit(txn);
-        printf("  ✓ Updated %d messages\n", num_updates);
+        printf("  ✓ Updated %d messages (reused key buffer)\n", num_updates);
     }
 
     // TEST 7: Verify old sender lookup fails

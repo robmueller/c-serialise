@@ -491,22 +491,228 @@ void free_mime_part(struct mime_part *part) {
     }
 }
 
-// TODO: Implement parse_mime_part and parse_multipart
-// These are more complex and require recursive parsing
+// ------------------------
+// MIME Part Parsing
+// ------------------------
+
+/**
+ * find_boundary_param - Find boundary parameter in Content-Type
+ */
+static const char *find_boundary_param(struct content_type *ct) {
+    for (size_t i = 0; i < ct->num_params; i++) {
+        if (strcasecmp(ct->params[i].name, "boundary") == 0) {
+            return ct->params[i].value;
+        }
+    }
+    return NULL;
+}
 
 int parse_mime_part(const char *input, struct mime_part *part) {
-    (void)input;
-    (void)part;
-    // TODO: Implement full MIME part parsing
-    return -1;
+    if (!input || !part) return -1;
+
+    memset(part, 0, sizeof(*part));
+
+    // Find blank line separating headers from body
+    const char *body_start = strstr(input, "\r\n\r\n");
+    if (!body_start) {
+        body_start = strstr(input, "\n\n");
+        if (body_start) {
+            body_start += 2;
+        } else {
+            // No body, just headers
+            body_start = input + strlen(input);
+        }
+    } else {
+        body_start += 4;
+    }
+
+    // Extract headers
+    size_t header_len = body_start - input;
+    char *headers = malloc(header_len + 1);
+    if (!headers) return -1;
+
+    memcpy(headers, input, header_len);
+    headers[header_len] = '\0';
+
+    int rc = parse_mime_headers(headers, part);
+    free(headers);
+
+    if (rc != 0) return rc;
+
+    // Extract body
+    part->body_length = strlen(body_start);
+    if (part->body_length > 0) {
+        part->body = malloc(part->body_length + 1);
+        if (!part->body) return -1;
+        memcpy(part->body, body_start, part->body_length);
+        part->body[part->body_length] = '\0';
+    }
+
+    // Handle multipart
+    if (strcasecmp(part->content_type.type, "multipart") == 0) {
+        const char *boundary = find_boundary_param(&part->content_type);
+        if (boundary && part->body) {
+            parse_multipart(part->body, boundary, &part->parts, &part->num_parts);
+        }
+    }
+    // Handle message/rfc822
+    else if (strcasecmp(part->content_type.type, "message") == 0 &&
+             strcasecmp(part->content_type.subtype, "rfc822") == 0) {
+        if (part->body) {
+            part->message = malloc(sizeof(struct message));
+            if (part->message) {
+                memset(part->message, 0, sizeof(struct message));
+
+                // Find the blank line separating headers from body in embedded message
+                const char *msg_body_start = strstr(part->body, "\r\n\r\n");
+                if (!msg_body_start) {
+                    msg_body_start = strstr(part->body, "\n\n");
+                    if (msg_body_start) msg_body_start += 2;
+                    else msg_body_start = part->body + strlen(part->body);
+                } else {
+                    msg_body_start += 4;
+                }
+
+                // Extract just the headers portion
+                size_t header_len = msg_body_start - part->body;
+                char *msg_headers = malloc(header_len + 1);
+                if (msg_headers) {
+                    memcpy(msg_headers, part->body, header_len);
+                    msg_headers[header_len] = '\0';
+                    parse_message_headers(msg_headers, part->message);
+                    free(msg_headers);
+                }
+            }
+        }
+    }
+
+    return 0;
 }
 
 int parse_multipart(const char *body, const char *boundary,
                     struct mime_part ***parts, size_t *num_parts) {
-    (void)body;
-    (void)boundary;
-    (void)parts;
-    (void)num_parts;
-    // TODO: Implement multipart parsing
-    return -1;
+    if (!body || !boundary || !parts || !num_parts) return -1;
+
+    *parts = NULL;
+    *num_parts = 0;
+
+    // Create boundary markers
+    char *start_boundary = malloc(strlen(boundary) + 3); // "--" + boundary
+    char *end_boundary = malloc(strlen(boundary) + 5);   // "--" + boundary + "--"
+    if (!start_boundary || !end_boundary) {
+        free(start_boundary);
+        free(end_boundary);
+        return -1;
+    }
+
+    sprintf(start_boundary, "--%s", boundary);
+    sprintf(end_boundary, "--%s--", boundary);
+
+    size_t capacity = 4;
+    struct mime_part **result = malloc(sizeof(struct mime_part*) * capacity);
+    if (!result) {
+        free(start_boundary);
+        free(end_boundary);
+        return -1;
+    }
+
+    size_t n = 0;
+    const char *s = body;
+
+    // Find first boundary
+    const char *first_boundary = strstr(s, start_boundary);
+    if (first_boundary) {
+        s = first_boundary + strlen(start_boundary);
+        // Skip to end of boundary line
+        while (*s && *s != '\n') s++;
+        if (*s == '\n') s++;
+    }
+
+    // Parse each part
+    while (*s) {
+        // Find next boundary
+        const char *next_boundary = strstr(s, start_boundary);
+        if (!next_boundary) break;
+
+        // Extract part content
+        size_t part_len = next_boundary - s;
+
+        // Trim trailing whitespace before boundary
+        while (part_len > 0 && (s[part_len - 1] == '\r' || s[part_len - 1] == '\n')) {
+            part_len--;
+        }
+
+        if (part_len > 0) {
+            // Allocate and parse part
+            if (n >= capacity) {
+                capacity *= 2;
+                struct mime_part **new_result = realloc(result,
+                    sizeof(struct mime_part*) * capacity);
+                if (!new_result) {
+                    for (size_t i = 0; i < n; i++) {
+                        free_mime_part(result[i]);
+                        free(result[i]);
+                    }
+                    free(result);
+                    free(start_boundary);
+                    free(end_boundary);
+                    return -1;
+                }
+                result = new_result;
+            }
+
+            char *part_str = malloc(part_len + 1);
+            if (!part_str) {
+                for (size_t i = 0; i < n; i++) {
+                    free_mime_part(result[i]);
+                    free(result[i]);
+                }
+                free(result);
+                free(start_boundary);
+                free(end_boundary);
+                return -1;
+            }
+
+            memcpy(part_str, s, part_len);
+            part_str[part_len] = '\0';
+
+            result[n] = malloc(sizeof(struct mime_part));
+            if (!result[n]) {
+                free(part_str);
+                for (size_t i = 0; i < n; i++) {
+                    free_mime_part(result[i]);
+                    free(result[i]);
+                }
+                free(result);
+                free(start_boundary);
+                free(end_boundary);
+                return -1;
+            }
+
+            parse_mime_part(part_str, result[n]);
+            free(part_str);
+            n++;
+        }
+
+        // Move to next boundary
+        s = next_boundary + strlen(start_boundary);
+
+        // Check for end boundary
+        if (strncmp(s, "--", 2) == 0) {
+            // This is the final boundary
+            break;
+        }
+
+        // Skip to end of boundary line
+        while (*s && *s != '\n') s++;
+        if (*s == '\n') s++;
+    }
+
+    free(start_boundary);
+    free(end_boundary);
+
+    *parts = result;
+    *num_parts = n;
+
+    return 0;
 }

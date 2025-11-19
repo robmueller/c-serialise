@@ -231,6 +231,185 @@ static void test_default_content_type(void) {
     free_mime_part(&part);
 }
 
+static void test_simple_mime_part(void) {
+    printf("Test 8: Simple MIME part with body...\n");
+
+    const char *mime_part =
+        "Content-Type: text/plain; charset=utf-8\n"
+        "Content-Transfer-Encoding: 7bit\n"
+        "\n"
+        "This is the body of the message.\n"
+        "It has multiple lines.\n";
+
+    struct mime_part part = {0};
+    int rc = parse_mime_part(mime_part, &part);
+
+    assert(rc == 0);
+    assert(strcmp(part.content_type.type, "text") == 0);
+    assert(strcmp(part.content_type.subtype, "plain") == 0);
+    assert(part.content_transfer_encoding != NULL);
+    assert(strcmp(part.content_transfer_encoding, "7bit") == 0);
+    assert(part.body != NULL);
+    assert(strstr(part.body, "This is the body") != NULL);
+
+    printf("  Content-Type: %s/%s\n", part.content_type.type, part.content_type.subtype);
+    printf("  Body length: %zu bytes\n", part.body_length);
+    printf("  ✓ Passed\n\n");
+
+    free_mime_part(&part);
+}
+
+static void test_multipart_mixed(void) {
+    printf("Test 9: Multipart/mixed parsing...\n");
+
+    const char *multipart =
+        "Content-Type: multipart/mixed; boundary=\"simple-boundary\"\n"
+        "\n"
+        "This is a preamble.\n"
+        "\n"
+        "--simple-boundary\n"
+        "Content-Type: text/plain\n"
+        "\n"
+        "First part body.\n"
+        "\n"
+        "--simple-boundary\n"
+        "Content-Type: text/html\n"
+        "\n"
+        "<html><body>Second part</body></html>\n"
+        "\n"
+        "--simple-boundary--\n";
+
+    struct mime_part part = {0};
+    int rc = parse_mime_part(multipart, &part);
+
+    assert(rc == 0);
+    assert(strcmp(part.content_type.type, "multipart") == 0);
+    assert(strcmp(part.content_type.subtype, "mixed") == 0);
+    assert(part.num_parts == 2);
+
+    printf("  Content-Type: %s/%s\n", part.content_type.type, part.content_type.subtype);
+    printf("  Number of parts: %zu\n", part.num_parts);
+
+    // Check first part
+    assert(strcmp(part.parts[0]->content_type.type, "text") == 0);
+    assert(strcmp(part.parts[0]->content_type.subtype, "plain") == 0);
+    assert(strstr(part.parts[0]->body, "First part body") != NULL);
+    printf("    Part 1: %s/%s\n", part.parts[0]->content_type.type, part.parts[0]->content_type.subtype);
+
+    // Check second part
+    assert(strcmp(part.parts[1]->content_type.type, "text") == 0);
+    assert(strcmp(part.parts[1]->content_type.subtype, "html") == 0);
+    assert(strstr(part.parts[1]->body, "<html>") != NULL);
+    printf("    Part 2: %s/%s\n", part.parts[1]->content_type.type, part.parts[1]->content_type.subtype);
+
+    printf("  ✓ Passed\n\n");
+
+    free_mime_part(&part);
+}
+
+static void test_nested_multipart(void) {
+    printf("Test 10: Nested multipart parsing...\n");
+
+    const char *nested =
+        "Content-Type: multipart/mixed; boundary=\"outer\"\n"
+        "\n"
+        "--outer\n"
+        "Content-Type: text/plain\n"
+        "\n"
+        "Plain text part.\n"
+        "\n"
+        "--outer\n"
+        "Content-Type: multipart/alternative; boundary=\"inner\"\n"
+        "\n"
+        "--inner\n"
+        "Content-Type: text/plain\n"
+        "\n"
+        "Alternative plain.\n"
+        "\n"
+        "--inner\n"
+        "Content-Type: text/html\n"
+        "\n"
+        "<p>Alternative HTML.</p>\n"
+        "\n"
+        "--inner--\n"
+        "\n"
+        "--outer--\n";
+
+    struct mime_part part = {0};
+    int rc = parse_mime_part(nested, &part);
+
+    assert(rc == 0);
+    assert(strcmp(part.content_type.type, "multipart") == 0);
+    assert(part.num_parts == 2);
+
+    printf("  Outer: %s/%s with %zu parts\n",
+           part.content_type.type, part.content_type.subtype, part.num_parts);
+
+    // First part should be text/plain
+    assert(strcmp(part.parts[0]->content_type.type, "text") == 0);
+    assert(strcmp(part.parts[0]->content_type.subtype, "plain") == 0);
+    printf("    Part 1: %s/%s\n", part.parts[0]->content_type.type, part.parts[0]->content_type.subtype);
+
+    // Second part should be multipart/alternative
+    assert(strcmp(part.parts[1]->content_type.type, "multipart") == 0);
+    assert(strcmp(part.parts[1]->content_type.subtype, "alternative") == 0);
+    assert(part.parts[1]->num_parts == 2);
+    printf("    Part 2: %s/%s with %zu nested parts\n",
+           part.parts[1]->content_type.type, part.parts[1]->content_type.subtype,
+           part.parts[1]->num_parts);
+
+    // Check nested parts
+    assert(strcmp(part.parts[1]->parts[0]->content_type.subtype, "plain") == 0);
+    assert(strcmp(part.parts[1]->parts[1]->content_type.subtype, "html") == 0);
+    printf("      Nested 1: text/plain\n");
+    printf("      Nested 2: text/html\n");
+
+    printf("  ✓ Passed\n\n");
+
+    free_mime_part(&part);
+}
+
+static void test_message_rfc822(void) {
+    printf("Test 11: Message/rfc822 embedded message...\n");
+
+    const char *forwarded =
+        "Content-Type: message/rfc822\n"
+        "\n"
+        "From: \"Original Sender\" <sender@example.com>\n"
+        "To: \"Recipient\" <recipient@example.com>\n"
+        "Subject: Original message\n"
+        "Message-ID: <original@example.com>\n"
+        "\n"
+        "This is the original message body.\n";
+
+    struct mime_part part = {0};
+    int rc = parse_mime_part(forwarded, &part);
+
+    assert(rc == 0);
+    assert(strcmp(part.content_type.type, "message") == 0);
+    assert(strcmp(part.content_type.subtype, "rfc822") == 0);
+    assert(part.message != NULL);
+
+    printf("  Content-Type: %s/%s\n", part.content_type.type, part.content_type.subtype);
+
+    // Check embedded message headers
+    assert(part.message->from_count > 0);
+    assert(strcmp(part.message->from[0].email, "sender@example.com") == 0);
+    printf("    From: %s\n", part.message->from[0].email);
+
+    assert(part.message->to_count > 0);
+    assert(strcmp(part.message->to[0].email, "recipient@example.com") == 0);
+    printf("    To: %s\n", part.message->to[0].email);
+
+    assert(part.message->subject != NULL);
+    assert(strcmp(part.message->subject, "Original message") == 0);
+    printf("    Subject: %s\n", part.message->subject);
+
+    printf("  ✓ Passed\n\n");
+
+    free_mime_part(&part);
+}
+
 int main(void) {
     printf("=== MIME Parser Tests ===\n\n");
 
@@ -241,6 +420,10 @@ int main(void) {
     test_message_ids();
     test_mime_headers();
     test_default_content_type();
+    test_simple_mime_part();
+    test_multipart_mixed();
+    test_nested_multipart();
+    test_message_rfc822();
 
     printf("=== All tests passed! ===\n");
     return 0;

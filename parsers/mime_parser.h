@@ -107,6 +107,7 @@ struct message {
 
 /**
  * struct mime_part - A MIME part with headers and content
+ * @guid: SHA256 hash of the original email content (hex string, 65 bytes)
  * @content_type: Parsed Content-Type header
  * @content_transfer_encoding: Transfer encoding (e.g., "base64", "quoted-printable")
  * @content_disposition: Content-Disposition value (e.g., "inline", "attachment")
@@ -122,6 +123,8 @@ struct message {
  * @num_parts: Number of sub-parts
  */
 struct mime_part {
+    char guid[65];  // SHA256 hash as hex string (64 chars + null terminator)
+
     struct content_type content_type;
 
     char *content_transfer_encoding;

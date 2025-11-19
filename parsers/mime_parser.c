@@ -7,6 +7,7 @@
 #include <strings.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <openssl/sha.h>
 
 // ------------------------
 // Helper Functions
@@ -312,7 +313,14 @@ int parse_message_headers(const char *headers, struct message *msg) {
 int parse_mime_headers(const char *headers, struct mime_part *part) {
     if (!headers || !part) return -1;
 
+    // Save guid before memset
+    char saved_guid[65];
+    memcpy(saved_guid, part->guid, 65);
+
     memset(part, 0, sizeof(*part));
+
+    // Restore guid after memset
+    memcpy(part->guid, saved_guid, 65);
 
     // Default Content-Type is text/plain
     part->content_type.type = strdup("text");
@@ -511,6 +519,16 @@ int parse_mime_part(const char *input, struct mime_part *part) {
     if (!input || !part) return -1;
 
     memset(part, 0, sizeof(*part));
+
+    // Calculate SHA256 hash of the full input
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256((const unsigned char*)input, strlen(input), hash);
+
+    // Convert to hex string
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
+        sprintf(&part->guid[i * 2], "%02x", hash[i]);
+    }
+    part->guid[64] = '\0';
 
     // Find blank line separating headers from body
     const char *body_start = strstr(input, "\r\n\r\n");

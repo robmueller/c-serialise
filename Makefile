@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g -std=c11 -I./include
-LDFLAGS = -lrt
+CFLAGS = -Wall -Wextra -g -std=c11 -I./include -I.
+LDFLAGS = -lrt -lcrypto
 
 SRC_DIR = src
 BUILD_DIR = build
@@ -21,7 +21,8 @@ EXAMPLES = $(BUILD_DIR)/kvstore_example \
            $(BUILD_DIR)/index_record_example \
            $(BUILD_DIR)/nested_struct_example \
            $(BUILD_DIR)/email_address_test \
-           $(BUILD_DIR)/mime_parser_test
+           $(BUILD_DIR)/mime_parser_test \
+           $(BUILD_DIR)/mime_kvstore_example
 
 .PHONY: all clean examples
 
@@ -62,6 +63,10 @@ $(BUILD_DIR)/email_address_test: $(EXAMPLES_DIR)/email_address_test.c $(BUILD_DI
 $(BUILD_DIR)/mime_parser_test: $(EXAMPLES_DIR)/mime_parser_test.c $(PARSER_OBJS) $(PARSER_DIR)/*.h
 	$(CC) $(CFLAGS) $< $(PARSER_OBJS) -o $@ $(LDFLAGS)
 
+# Build MIME KV store example
+$(BUILD_DIR)/mime_kvstore_example: $(EXAMPLES_DIR)/mime_kvstore_example.c $(KVSTORE_OBJS) $(PARSER_OBJS) $(PARSER_DIR)/*.h include/*.h
+	$(CC) $(CFLAGS) $< $(KVSTORE_OBJS) $(PARSER_OBJS) -o $@ $(LDFLAGS)
+
 examples: $(EXAMPLES)
 
 clean:
@@ -85,6 +90,9 @@ run-email: $(BUILD_DIR)/email_address_test
 
 run-mime: $(BUILD_DIR)/mime_parser_test
 	./$(BUILD_DIR)/mime_parser_test
+
+run-mime-kv: $(BUILD_DIR)/mime_kvstore_example
+	./$(BUILD_DIR)/mime_kvstore_example
 
 run-all: $(EXAMPLES)
 	@echo "=== Running index_record_example ==="
